@@ -35,7 +35,7 @@ import {
     getDateRange,
     formatHealthValue,
 } from "@/utils/healthUtils"
-import { SafeAreaProvider } from "react-native-safe-area-context"
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context"
 
 const screenWidth = Dimensions.get("window").width
 
@@ -1253,190 +1253,196 @@ const HealthDashboard: React.FC = () => {
 
     return (
         <SafeAreaProvider>
-            <ScrollView style={styles.container} refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} />}>
-                <View style={styles.header}>
-                    <Text style={styles.title}>Health Dashboard</Text>
-                    <Text style={styles.subtitle}>Your comprehensive health overview</Text>
-                    {permissions.length === 0 && (
-                        <TouchableOpacity style={styles.permissionPrompt} onPress={retryPermissions}>
-                            <Text style={styles.permissionPromptText}>Grant Health Permissions</Text>
+            <SafeAreaView style={styles.safeArea}>
+                <ScrollView style={styles.container} refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} />}>
+                    <View style={styles.header}>
+                        <Text style={styles.title}>Health Dashboard</Text>
+                        <Text style={styles.subtitle}>Your comprehensive health overview</Text>
+                        {permissions.length === 0 && (
+                            <TouchableOpacity style={styles.permissionPrompt} onPress={retryPermissions}>
+                                <Text style={styles.permissionPromptText}>Grant Health Permissions</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                    {/* Tab Navigation */}
+                    <View style={styles.tabContainer}>
+                        <TouchableOpacity
+                            style={[styles.tab, activeTab === "overview" && styles.activeTab]}
+                            onPress={() => setActiveTab("overview")}
+                        >
+                            <Text style={[styles.tabText, activeTab === "overview" && styles.activeTabText]}>Overview</Text>
                         </TouchableOpacity>
-                    )}
-                </View>
+                        <TouchableOpacity
+                            style={[styles.tab, activeTab === "charts" && styles.activeTab]}
+                            onPress={() => setActiveTab("charts")}
+                        >
+                            <Text style={[styles.tabText, activeTab === "charts" && styles.activeTabText]}>Charts</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.tab, activeTab === "vitals" && styles.activeTab]}
+                            onPress={() => setActiveTab("vitals")}
+                        >
+                            <Text style={[styles.tabText, activeTab === "vitals" && styles.activeTabText]}>Vitals</Text>
+                        </TouchableOpacity>
+                    </View>
 
-                {/* Tab Navigation */}
-                <View style={styles.tabContainer}>
-                    <TouchableOpacity
-                        style={[styles.tab, activeTab === "overview" && styles.activeTab]}
-                        onPress={() => setActiveTab("overview")}
-                    >
-                        <Text style={[styles.tabText, activeTab === "overview" && styles.activeTabText]}>Overview</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.tab, activeTab === "charts" && styles.activeTab]}
-                        onPress={() => setActiveTab("charts")}
-                    >
-                        <Text style={[styles.tabText, activeTab === "charts" && styles.activeTabText]}>Charts</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.tab, activeTab === "vitals" && styles.activeTab]}
-                        onPress={() => setActiveTab("vitals")}
-                    >
-                        <Text style={[styles.tabText, activeTab === "vitals" && styles.activeTabText]}>Vitals</Text>
-                    </TouchableOpacity>
-                </View>
+                    {/* Tab Content */}
+                    <View style={styles.statsContainer}>{renderTabContent()}</View>
 
-                {/* Tab Content */}
-                <View style={styles.statsContainer}>{renderTabContent()}</View>
+                    <View style={styles.footer}>
+                        <Text style={styles.footerText}>
+                            Data from Google Health Connect • Last updated: {new Date().toLocaleTimeString()}
+                        </Text>
+                    </View>
 
-                <View style={styles.footer}>
-                    <Text style={styles.footerText}>
-                        Data from Google Health Connect • Last updated: {new Date().toLocaleTimeString()}
-                    </Text>
-                </View>
-
-                {/* Input Modal - Keep your existing modal code */}
-                <Modal visible={showInputModal} animationType="slide" transparent>
-                    <View style={styles.modalContainer}>
-                        <View style={styles.modalContent}>
-                            <Text style={styles.modalTitle}>
-                                Enter{" "}
-                                {inputType === "bloodPressure"
-                                    ? "Blood Pressure"
-                                    : inputType === "bodyTemp"
-                                        ? "Body Temperature"
-                                        : inputType === "heartRate"
-                                            ? "Heart Rate"
-                                            : inputType === "sleep"
-                                                ? "Sleep Times"
-                                                : inputType.charAt(0).toUpperCase() + inputType.slice(1)}
-                            </Text>
-                            {inputType === "sleep" ? (
-                                <View>
-                                    <Text style={styles.timeLabel}>Sleep Start Time:</Text>
-                                    <TouchableOpacity style={styles.timeButton} onPress={() => setShowStartTimePicker(true)}>
-                                        <Text style={styles.timeButtonText}>
-                                            {sleepStartTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                        </Text>
-                                    </TouchableOpacity>
-                                    <Text style={styles.timeLabel}>Sleep End Time:</Text>
-                                    <TouchableOpacity style={styles.timeButton} onPress={() => setShowEndTimePicker(true)}>
-                                        <Text style={styles.timeButtonText}>
-                                            {sleepEndTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                        </Text>
-                                    </TouchableOpacity>
-                                    {showStartTimePicker && (
-                                        <DateTimePicker
-                                            value={sleepStartTime}
-                                            mode="time"
-                                            is24Hour={false}
-                                            display="default"
-                                            onChange={(event, selectedTime) => {
-                                                setShowStartTimePicker(false)
-                                                if (selectedTime) {
-                                                    setSleepStartTime(selectedTime)
-                                                }
-                                            }}
-                                        />
-                                    )}
-                                    {showEndTimePicker && (
-                                        <DateTimePicker
-                                            value={sleepEndTime}
-                                            mode="time"
-                                            is24Hour={false}
-                                            display="default"
-                                            onChange={(event, selectedTime) => {
-                                                setShowEndTimePicker(false)
-                                                if (selectedTime) {
-                                                    const newEndTime = selectedTime
-                                                    if (newEndTime <= sleepStartTime) {
-                                                        newEndTime.setDate(newEndTime.getDate() + 1)
+                    {/* Input Modal - Keep your existing modal code */}
+                    <Modal visible={showInputModal} animationType="slide" transparent>
+                        <View style={styles.modalContainer}>
+                            <View style={styles.modalContent}>
+                                <Text style={styles.modalTitle}>
+                                    Enter{" "}
+                                    {inputType === "bloodPressure"
+                                        ? "Blood Pressure"
+                                        : inputType === "bodyTemp"
+                                            ? "Body Temperature"
+                                            : inputType === "heartRate"
+                                                ? "Heart Rate"
+                                                : inputType === "sleep"
+                                                    ? "Sleep Times"
+                                                    : inputType.charAt(0).toUpperCase() + inputType.slice(1)}
+                                </Text>
+                                {inputType === "sleep" ? (
+                                    <View>
+                                        <Text style={styles.timeLabel}>Sleep Start Time:</Text>
+                                        <TouchableOpacity style={styles.timeButton} onPress={() => setShowStartTimePicker(true)}>
+                                            <Text style={styles.timeButtonText}>
+                                                {sleepStartTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                            </Text>
+                                        </TouchableOpacity>
+                                        <Text style={styles.timeLabel}>Sleep End Time:</Text>
+                                        <TouchableOpacity style={styles.timeButton} onPress={() => setShowEndTimePicker(true)}>
+                                            <Text style={styles.timeButtonText}>
+                                                {sleepEndTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                            </Text>
+                                        </TouchableOpacity>
+                                        {showStartTimePicker && (
+                                            <DateTimePicker
+                                                value={sleepStartTime}
+                                                mode="time"
+                                                is24Hour={false}
+                                                display="default"
+                                                onChange={(event, selectedTime) => {
+                                                    setShowStartTimePicker(false)
+                                                    if (selectedTime) {
+                                                        setSleepStartTime(selectedTime)
                                                     }
-                                                    setSleepEndTime(newEndTime)
-                                                }
-                                            }}
-                                        />
-                                    )}
-                                </View>
-                            ) : (
-                                <View>
-                                    <TextInput
-                                        style={styles.input}
-                                        placeholder={
-                                            inputType === "heartRate"
-                                                ? "Heart rate (bpm)"
-                                                : inputType === "weight"
-                                                    ? "Weight (kg)"
-                                                    : inputType === "height"
-                                                        ? "Height (cm)"
-                                                        : inputType === "bloodPressure"
-                                                            ? "Systolic (mmHg)"
-                                                            : inputType === "bodyTemp"
-                                                                ? "Temperature (°C)"
-                                                                : inputType === "hydration"
-                                                                    ? "Volume (ml)"
-                                                                    : `Enter ${inputType}`
-                                        }
-                                        keyboardType="numeric"
-                                        value={inputValue}
-                                        onChangeText={setInputValue}
-                                    />
-
-                                    {inputType === "bloodPressure" && (
+                                                }}
+                                            />
+                                        )}
+                                        {showEndTimePicker && (
+                                            <DateTimePicker
+                                                value={sleepEndTime}
+                                                mode="time"
+                                                is24Hour={false}
+                                                display="default"
+                                                onChange={(event, selectedTime) => {
+                                                    setShowEndTimePicker(false)
+                                                    if (selectedTime) {
+                                                        const newEndTime = selectedTime
+                                                        if (newEndTime <= sleepStartTime) {
+                                                            newEndTime.setDate(newEndTime.getDate() + 1)
+                                                        }
+                                                        setSleepEndTime(newEndTime)
+                                                    }
+                                                }}
+                                            />
+                                        )}
+                                    </View>
+                                ) : (
+                                    <View>
                                         <TextInput
                                             style={styles.input}
-                                            placeholder="Diastolic (mmHg)"
+                                            placeholder={
+                                                inputType === "heartRate"
+                                                    ? "Heart rate (bpm)"
+                                                    : inputType === "weight"
+                                                        ? "Weight (kg)"
+                                                        : inputType === "height"
+                                                            ? "Height (cm)"
+                                                            : inputType === "bloodPressure"
+                                                                ? "Systolic (mmHg)"
+                                                                : inputType === "bodyTemp"
+                                                                    ? "Temperature (°C)"
+                                                                    : inputType === "hydration"
+                                                                        ? "Volume (ml)"
+                                                                        : `Enter ${inputType}`
+                                            }
                                             keyboardType="numeric"
-                                            value={inputValue2}
-                                            onChangeText={setInputValue2}
+                                            value={inputValue}
+                                            onChangeText={setInputValue}
                                         />
-                                    )}
-                                </View>
-                            )}
-                            <View style={styles.modalButtons}>
-                                <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={closeInputModal}>
-                                    <Text style={[styles.modalButtonText, styles.cancelButtonText]}>Cancel</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.modalButton, styles.saveButton, saving && styles.saveButtonDisabled]}
-                                    onPress={saveHealthData}
-                                    disabled={saving}
-                                >
-                                    <Text style={[styles.modalButtonText, styles.saveButtonText]}>{saving ? "Saving..." : "Save"}</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-                    </View>
-                </Modal>
 
-                {/* Permission Modal - Keep your existing modal code */}
-                <Modal visible={showPermissionModal} animationType="slide" transparent>
-                    <View style={styles.modalContainer}>
-                        <View style={styles.modalContent}>
-                            <Text style={styles.modalTitle}>Health Connect Permissions</Text>
-                            <Text style={styles.permissionModalText}>
-                                To display your health data, this app needs access to Health Connect.
-                                {"\n\n"}
-                                You can grant essential permissions for basic functionality, or all permissions for complete health
-                                tracking.
-                            </Text>
-                            <View style={styles.modalButtons}>
-                                <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={skipPermissions}>
-                                    <Text style={[styles.modalButtonText, styles.cancelButtonText]}>Skip</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={retryPermissions}>
-                                    <Text style={[styles.modalButtonText, styles.saveButtonText]}>Grant Permissions</Text>
-                                </TouchableOpacity>
+                                        {inputType === "bloodPressure" && (
+                                            <TextInput
+                                                style={styles.input}
+                                                placeholder="Diastolic (mmHg)"
+                                                keyboardType="numeric"
+                                                value={inputValue2}
+                                                onChangeText={setInputValue2}
+                                            />
+                                        )}
+                                    </View>
+                                )}
+                                <View style={styles.modalButtons}>
+                                    <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={closeInputModal}>
+                                        <Text style={[styles.modalButtonText, styles.cancelButtonText]}>Cancel</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.modalButton, styles.saveButton, saving && styles.saveButtonDisabled]}
+                                        onPress={saveHealthData}
+                                        disabled={saving}
+                                    >
+                                        <Text style={[styles.modalButtonText, styles.saveButtonText]}>{saving ? "Saving..." : "Save"}</Text>
+                                    </TouchableOpacity>
+                                </View>
                             </View>
                         </View>
-                    </View>
-                </Modal>
-            </ScrollView>
+                    </Modal>
+
+                    {/* Permission Modal - Keep your existing modal code */}
+                    <Modal visible={showPermissionModal} animationType="slide" transparent>
+                        <View style={styles.modalContainer}>
+                            <View style={styles.modalContent}>
+                                <Text style={styles.modalTitle}>Health Connect Permissions</Text>
+                                <Text style={styles.permissionModalText}>
+                                    To display your health data, this app needs access to Health Connect.
+                                    {"\n\n"}
+                                    You can grant essential permissions for basic functionality, or all permissions for complete health
+                                    tracking.
+                                </Text>
+                                <View style={styles.modalButtons}>
+                                    <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={skipPermissions}>
+                                        <Text style={[styles.modalButtonText, styles.cancelButtonText]}>Skip</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={retryPermissions}>
+                                        <Text style={[styles.modalButtonText, styles.saveButtonText]}>Grant Permissions</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </View>
+                    </Modal>
+                </ScrollView>
+            </SafeAreaView>
         </SafeAreaProvider>
     )
 }
 
 const styles = StyleSheet.create({
+    safeArea: {
+        flex: 1,
+        backgroundColor: "#2196F3",
+    },
     container: {
         flex: 1,
         backgroundColor: "#f5f5f5",
@@ -1450,6 +1456,7 @@ const styles = StyleSheet.create({
     },
     header: {
         padding: 20,
+        paddingTop: 10,
         backgroundColor: "#2196F3",
         borderBottomLeftRadius: 20,
         borderBottomRightRadius: 20,

@@ -110,34 +110,6 @@ export default function StepsScreen() {
         }
     };
 
-    const canReadSteps = () => {
-        if (!permissions || permissions.length === 0) {
-            console.log('canReadSteps: No permissions array or empty array');
-            return false;
-        }
-
-        const hasStepsRead = permissions.some((perm: any) => {
-            const recordType = perm.recordType || perm.dataType || perm.type || perm.permission;
-            const accessType = perm.accessType || perm.access || perm.mode;
-
-            const isStepsPermission = recordType === 'Steps' ||
-                recordType === 'STEPS' ||
-                recordType === 'steps' ||
-                recordType?.toLowerCase?.() === 'steps';
-
-            const isReadPermission = accessType === 'read' ||
-                accessType === 'READ' ||
-                accessType?.toLowerCase?.() === 'read' ||
-                accessType?.includes?.('read') ||
-                accessType?.includes?.('READ');
-
-            const result = isStepsPermission && isReadPermission;
-
-            return result;
-        });
-        return hasStepsRead;
-    };
-
     const loadStepGoal = async () => {
         try {
             const savedGoal = await AsyncStorage.getItem('stepsGoal');
@@ -150,11 +122,6 @@ export default function StepsScreen() {
     };
 
     const loadStepsData = async () => {
-        if (!canReadSteps()) {
-            console.log('No permission to read steps data');
-            return;
-        }
-
         setLoading(true);
         try {
             const today = new Date();
@@ -326,7 +293,7 @@ export default function StepsScreen() {
         </LinearGradient>
 
         <View style={styles.content}>
-            {!canReadSteps() && permissions.length === 0 && (
+            {permissions.length === 0 && (
                 <View style={styles.permissionCard}>
                     <Ionicons name="warning-outline" size={24} color="#FF6B35" />
                     <View style={styles.permissionContent}>
@@ -341,28 +308,6 @@ export default function StepsScreen() {
                         >
                             <Text style={styles.permissionButtonText}>
                                 {loading ? 'Requesting...' : 'Grant Permissions'}
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            )}
-
-            {permissions.length > 0 && !canReadSteps() && (
-                <View style={styles.permissionCard}>
-                    <Ionicons name="information-circle-outline" size={24} color="#4A90E2" />
-                    <View style={styles.permissionContent}>
-                        <Text style={styles.permissionTitle}>Permission Status</Text>
-                        <Text style={styles.permissionText}>
-                            Some permissions are granted but steps reading permission might be missing.
-                            Try refreshing or re-granting permissions.
-                        </Text>
-                        <TouchableOpacity
-                            style={styles.permissionButton}
-                            onPress={requestPermissions}
-                            disabled={loading}
-                        >
-                            <Text style={styles.permissionButtonText}>
-                                {loading ? 'Requesting...' : 'Update Permissions'}
                             </Text>
                         </TouchableOpacity>
                     </View>
