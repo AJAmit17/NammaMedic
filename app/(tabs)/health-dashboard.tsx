@@ -1,41 +1,40 @@
 "use client"
 
-import type React from "react"
-import { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import {
     View,
     Text,
     StyleSheet,
+    TouchableOpacity,
     ScrollView,
     RefreshControl,
-    Alert,
-    TouchableOpacity,
-    TextInput,
     Modal,
+    TextInput,
+    Alert,
     Dimensions,
 } from "react-native"
-import DateTimePicker from "@react-native-community/datetimepicker"
-import * as Device from "expo-device"
-import { LineChart, BarChart, PieChart } from "react-native-chart-kit"
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context"
 import {
     initialize,
+    requestPermission,
+    getGrantedPermissions,
     readRecords,
+    insertRecords,
     getSdkStatus,
     SdkAvailabilityStatus,
-    insertRecords,
     RecordingMethod,
     DeviceType,
-    aggregateGroupByDuration,
-    aggregateGroupByPeriod,
 } from "react-native-health-connect"
-import {
+import { LineChart } from "react-native-chart-kit"
+import { 
+    getDateRange, 
+    formatHealthValue, 
     requestEssentialPermissions,
     requestAllPermissions,
     checkPermissionStatus,
-    getDateRange,
-    formatHealthValue,
-} from "@/utils/healthUtils"
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context"
+    getDeviceMetadata 
+} from "../../utils/healthUtils"
+import * as Device from "expo-device"
 
 const screenWidth = Dimensions.get("window").width
 
@@ -48,7 +47,6 @@ interface HealthData {
     bloodPressure: { systolic: number; diastolic: number } | null
     bodyTemp: number
     hydration: number
-    sleepHours: number
 }
 
 interface StatsCardProps {
@@ -81,7 +79,7 @@ const StatsCard: React.FC<StatsCardProps> = ({
             <Text style={styles.cardIcon}>{icon}</Text>
             <Text style={styles.cardTitle}>{title}</Text>
             {canAdd && onAdd && (
-                <TouchableOpacity style={styles.addButton} onPress={onAdd}>
+                <TouchableOpacity style={[styles.addButton, { backgroundColor: color }]} onPress={onAdd}>
                     <Text style={styles.addButtonText}>+</Text>
                 </TouchableOpacity>
             )}
@@ -128,7 +126,6 @@ const HealthDashboard: React.FC = () => {
         bloodPressure: { systolic: 120, diastolic: 80 },
         bodyTemp: 36.8,
         hydration: 1800,
-        sleepHours: 7.2,
     })
 
     const [loading, setLoading] = useState(false)
@@ -137,13 +134,11 @@ const HealthDashboard: React.FC = () => {
     const [permissions, setPermissions] = useState<any[]>([])
     const [hasEssentialPermissions, setHasEssentialPermissions] = useState(false)
     const [showPermissionModal, setShowPermissionModal] = useState(false)
-    const [activeTab, setActiveTab] = useState("overview")
     const [aggregatedChartData, setAggregatedChartData] = useState<any>({
         steps: { labels: [], datasets: [{ data: [] }] },
         heartRate: { labels: [], datasets: [{ data: [] }] },
         weight: { labels: [], datasets: [{ data: [] }] },
         hydration: { labels: [], datasets: [{ data: [] }] },
-        sleep: [],
     })
 
     // Input modal states
@@ -152,12 +147,6 @@ const HealthDashboard: React.FC = () => {
     const [inputValue, setInputValue] = useState("")
     const [inputValue2, setInputValue2] = useState("")
     const [saving, setSaving] = useState(false)
-
-    // Sleep time picker states
-    const [sleepStartTime, setSleepStartTime] = useState(new Date())
-    const [sleepEndTime, setSleepEndTime] = useState(new Date())
-    const [showStartTimePicker, setShowStartTimePicker] = useState(false)
-    const [showEndTimePicker, setShowEndTimePicker] = useState(false)
 
     const chartConfig = {
         backgroundGradientFrom: "#ffffff",
@@ -179,7 +168,6 @@ const HealthDashboard: React.FC = () => {
         },
     }
 
-    // Your existing useEffect and functions remain the same
     useEffect(() => {
         initializeHealthConnect()
     }, [])
@@ -279,7 +267,7 @@ const HealthDashboard: React.FC = () => {
             const canRead = (recordType: string) =>
                 currentPermissions.some((perm: any) => perm.recordType === recordType && perm.accessType === "read")
 
-            // Load weekly steps data using readRecords and manual aggregation
+            // Load weekly steps data
             if (canRead("Steps")) {
                 try {
                     const stepsData = await readRecords("Steps", {
@@ -294,7 +282,6 @@ const HealthDashboard: React.FC = () => {
                     const data: number[] = []
                     const today = new Date()
 
-                    // Create daily aggregations
                     for (let i = 6; i >= 0; i--) {
                         const date = new Date(today)
                         date.setDate(date.getDate() - i)
@@ -308,7 +295,7 @@ const HealthDashboard: React.FC = () => {
 
                         const daySteps = stepsData.records
                             .filter((record: any) => {
-                                const recordTime = new Date(record.startTime)
+                                const recordTime = new Date(record.startTime || record.time)
                                 return recordTime >= dayStart && recordTime <= dayEnd
                             })
                             .reduce((sum: number, record: any) => sum + record.count, 0)
@@ -355,13 +342,16 @@ const HealthDashboard: React.FC = () => {
                         let sampleCount = 0
 
                         heartRateData.records.forEach((record: any) => {
-                            const recordTime = new Date(record.startTime)
+                            const recordTime = new Date(record.startTime || record.time)
                             if (recordTime >= dayStart && recordTime <= dayEnd) {
                                 if (record.samples && record.samples.length > 0) {
                                     record.samples.forEach((sample: any) => {
                                         totalBeats += sample.beatsPerMinute
                                         sampleCount++
                                     })
+                                } else if (record.beatsPerMinute) {
+                                    totalBeats += record.beatsPerMinute
+                                    sampleCount++
                                 }
                             }
                         })
@@ -397,11 +387,11 @@ const HealthDashboard: React.FC = () => {
                     const weeklyData: { [key: string]: number[] } = {}
 
                     weightData.records.forEach((record: any) => {
-                        const date = new Date(record.time)
-                        const weekStart = new Date(date)
-                        weekStart.setDate(date.getDate() - date.getDay())
+                        const recordDate = new Date(record.time)
+                        const weekStart = new Date(recordDate)
+                        weekStart.setDate(recordDate.getDate() - recordDate.getDay())
                         const weekKey = weekStart.toISOString().split('T')[0]
-
+                        
                         if (!weeklyData[weekKey]) {
                             weeklyData[weekKey] = []
                         }
@@ -409,10 +399,9 @@ const HealthDashboard: React.FC = () => {
                     })
 
                     Object.keys(weeklyData).sort().forEach((weekKey, index) => {
-                        const weights = weeklyData[weekKey]
-                        const avgWeight = weights.reduce((sum, w) => sum + w, 0) / weights.length
+                        const avgWeight = weeklyData[weekKey].reduce((sum, w) => sum + w, 0) / weeklyData[weekKey].length
                         labels.push(`Week ${index + 1}`)
-                        data.push(parseFloat(avgWeight.toFixed(1)))
+                        data.push(Math.round(avgWeight * 10) / 10)
                     })
 
                     setAggregatedChartData((prev: any) => ({
@@ -452,7 +441,7 @@ const HealthDashboard: React.FC = () => {
 
                         const dayHydration = hydrationData.records
                             .filter((record: any) => {
-                                const recordTime = new Date(record.startTime)
+                                const recordTime = new Date(record.startTime || record.time)
                                 return recordTime >= dayStart && recordTime <= dayEnd
                             })
                             .reduce((sum: number, record: any) => sum + (record.volume?.inLiters || 0), 0)
@@ -466,93 +455,6 @@ const HealthDashboard: React.FC = () => {
                     }))
                 } catch (error) {
                     console.log("Could not load hydration data for charts:", error)
-                }
-            }
-
-            // Load sleep session data for pie chart
-            if (canRead("SleepSession")) {
-                try {
-                    const sleepData = await readRecords("SleepSession", {
-                        timeRangeFilter: {
-                            operator: "between",
-                            startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-                            endTime: new Date().toISOString(),
-                        },
-                    })
-
-                    let deepSleep = 0
-                    let lightSleep = 0
-                    let remSleep = 0
-                    let awakeSleep = 0
-
-                    sleepData.records.forEach((record: any) => {
-                        if (record.stages && record.stages.length > 0) {
-                            record.stages.forEach((stage: any) => {
-                                const start = new Date(stage.startTime)
-                                const end = new Date(stage.endTime)
-                                const duration = (end.getTime() - start.getTime()) / (1000 * 60 * 60) // hours
-
-                                switch (stage.stage) {
-                                    case 3: // Deep sleep
-                                        deepSleep += duration
-                                        break
-                                    case 2: // Light sleep
-                                        lightSleep += duration
-                                        break
-                                    case 4: // REM sleep
-                                        remSleep += duration
-                                        break
-                                    case 1: // Awake
-                                        awakeSleep += duration
-                                        break
-                                }
-                            })
-                        } else {
-                            // If no stages, assume all light sleep
-                            const start = new Date(record.startTime)
-                            const end = new Date(record.endTime)
-                            const duration = (end.getTime() - start.getTime()) / (1000 * 60 * 60)
-                            lightSleep += duration
-                        }
-                    })
-
-                    const sleepPieData = [
-                        {
-                            name: "Deep",
-                            population: parseFloat(deepSleep.toFixed(1)),
-                            color: "#4A90E2",
-                            legendFontColor: "#333",
-                            legendFontSize: 12
-                        },
-                        {
-                            name: "Light",
-                            population: parseFloat(lightSleep.toFixed(1)),
-                            color: "#7ED321",
-                            legendFontColor: "#333",
-                            legendFontSize: 12
-                        },
-                        {
-                            name: "REM",
-                            population: parseFloat(remSleep.toFixed(1)),
-                            color: "#F5A623",
-                            legendFontColor: "#333",
-                            legendFontSize: 12
-                        },
-                        {
-                            name: "Awake",
-                            population: parseFloat(awakeSleep.toFixed(1)),
-                            color: "#D0021B",
-                            legendFontColor: "#333",
-                            legendFontSize: 12
-                        },
-                    ].filter(item => item.population > 0)
-
-                    setAggregatedChartData((prev: any) => ({
-                        ...prev,
-                        sleep: sleepPieData
-                    }))
-                } catch (error) {
-                    console.log("Could not load sleep data for chart:", error)
                 }
             }
 
@@ -576,7 +478,6 @@ const HealthDashboard: React.FC = () => {
             bloodPressure: null,
             bodyTemp: 0,
             hydration: 0,
-            sleepHours: 0,
         }
 
         try {
@@ -620,6 +521,9 @@ const HealthDashboard: React.FC = () => {
                                 totalBeats += sample.beatsPerMinute
                                 sampleCount++
                             })
+                        } else if (record.beatsPerMinute) {
+                            totalBeats += record.beatsPerMinute
+                            sampleCount++
                         }
                     })
 
@@ -743,27 +647,6 @@ const HealthDashboard: React.FC = () => {
                 }
             }
 
-            // Load Sleep
-            if (canRead("SleepSession")) {
-                try {
-                    const sleepData = await readRecords("SleepSession", {
-                        timeRangeFilter: {
-                            operator: "between",
-                            startTime: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-                            endTime: new Date().toISOString(),
-                        },
-                    })
-                    const totalSleepHours = sleepData.records.reduce((sum: number, record: any) => {
-                        const start = new Date(record.startTime)
-                        const end = new Date(record.endTime)
-                        return sum + (end.getTime() - start.getTime()) / (1000 * 60 * 60)
-                    }, 0)
-                    healthDataUpdate.sleepHours = Math.round(totalSleepHours * 10) / 10
-                } catch (error) {
-                    console.log("Could not load sleep data:", error)
-                }
-            }
-
             setHealthData(healthDataUpdate)
         } catch (error) {
             console.error("General error loading health data:", error)
@@ -799,34 +682,10 @@ const HealthDashboard: React.FC = () => {
     const canWrite = (recordType: string) =>
         permissions.some((perm: any) => perm.recordType === recordType && perm.accessType === "write")
 
-    const getDeviceMetadata = () => {
-        return {
-            manufacturer: Device.manufacturer || "Unknown",
-            model: Device.modelName || Device.deviceName || "Unknown",
-            type: DeviceType.TYPE_PHONE,
-        }
-    }
-
     const openInputModal = (type: string) => {
         setInputType(type)
         setInputValue("")
         setInputValue2("")
-
-        if (type === "sleep") {
-            const now = new Date()
-            const defaultStartTime = new Date()
-            defaultStartTime.setHours(22, 0, 0, 0)
-
-            const defaultEndTime = new Date()
-            defaultEndTime.setHours(7, 0, 0, 0)
-            if (defaultEndTime < defaultStartTime) {
-                defaultEndTime.setDate(defaultEndTime.getDate() + 1)
-            }
-
-            setSleepStartTime(defaultStartTime)
-            setSleepEndTime(defaultEndTime)
-        }
-
         setShowInputModal(true)
     }
 
@@ -835,17 +694,10 @@ const HealthDashboard: React.FC = () => {
         setInputType("")
         setInputValue("")
         setInputValue2("")
-        setShowStartTimePicker(false)
-        setShowEndTimePicker(false)
     }
 
     const saveHealthData = async () => {
-        if (inputType === "sleep") {
-            if (sleepEndTime <= sleepStartTime) {
-                Alert.alert("Error", "End time must be after start time")
-                return
-            }
-        } else if (inputType === "bloodPressure") {
+        if (inputType === "bloodPressure") {
             if (!inputValue.trim() || !inputValue2.trim()) {
                 Alert.alert("Error", "Please enter both systolic and diastolic values")
                 return
@@ -906,7 +758,7 @@ const HealthDashboard: React.FC = () => {
                     break
                 case "bloodPressure":
                     if (!inputValue2.trim()) {
-                        Alert.alert("Error", "Please enter both systolic and diastolic values")
+                        Alert.alert("Error", "Please enter diastolic value")
                         return
                     }
                     record = {
@@ -949,32 +801,12 @@ const HealthDashboard: React.FC = () => {
                         endTime: now,
                     }
                     break
-                case "sleep":
-                    const sleepDurationMs = sleepEndTime.getTime() - sleepStartTime.getTime()
-                    const sleepDurationHours = sleepDurationMs / (1000 * 60 * 60)
-
-                    const stages = []
-                    stages.push({
-                        startTime: sleepStartTime.toISOString(),
-                        endTime: sleepEndTime.toISOString(),
-                        stage: 2,
-                    })
-
-                    record = {
-                        ...record,
-                        recordType: "SleepSession",
-                        title: "Sleep Session",
-                        notes: `Manual sleep entry - ${sleepDurationHours.toFixed(1)} hours`,
-                        startTime: sleepStartTime.toISOString(),
-                        endTime: sleepEndTime.toISOString(),
-                        stages: stages,
-                    }
-                    break
                 default:
                     Alert.alert("Error", "Invalid data type")
                     return
             }
 
+            console.log("Attempting to save record:", JSON.stringify(record, null, 2))
             await insertRecords([record])
             Alert.alert("Success", `${inputType} data saved successfully!`)
             closeInputModal()
@@ -982,260 +814,9 @@ const HealthDashboard: React.FC = () => {
             await loadAggregatedChartData()
         } catch (error) {
             console.error("Error saving health data:", error)
-            Alert.alert("Error", "Failed to save health data")
+            Alert.alert("Error", `Failed to save health data: ${error instanceof Error ? error.message : 'Unknown error'}`)
         } finally {
             setSaving(false)
-        }
-    }
-
-    const renderTabContent = () => {
-        switch (activeTab) {
-            case "overview":
-                return (
-                    <View style={styles.tabContent}>
-                        <Text style={styles.sectionTitle}>Today's Overview</Text>
-                        <View style={styles.row}>
-                            <StatsCard
-                                title="Steps"
-                                value={formatHealthValue(healthData.steps, "steps")}
-                                unit="steps"
-                                icon="👟"
-                                color="#4CAF50"
-                                progress={(healthData.steps / 10000) * 100}
-                                target={10000}
-                                trend="up"
-                            />
-                        </View>
-                        <View style={styles.row}>
-                            <StatsCard
-                                title="Heart Rate"
-                                value={formatHealthValue(healthData.heartRate, "heartRate")}
-                                unit="bpm"
-                                icon="❤️"
-                                color="#E91E63"
-                                onAdd={() => openInputModal("heartRate")}
-                                canAdd={canWrite("HeartRate")}
-                                trend="stable"
-                            />
-                            <StatsCard
-                                title="Distance"
-                                value={formatHealthValue(healthData.distance, "distance")}
-                                unit="km"
-                                icon="📍"
-                                color="#2196F3"
-                                progress={(healthData.distance / 8) * 100}
-                                target={8}
-                                trend="up"
-                            />
-                        </View>
-                    </View>
-                )
-            case "charts":
-                return (
-                    <View style={styles.tabContent}>
-                        <Text style={styles.sectionTitle}>Weekly Steps</Text>
-                        <View style={styles.chartContainer}>
-                            {chartsLoading ? (
-                                <View style={styles.loadingContainer}>
-                                    <Text style={styles.loadingText}>Loading chart...</Text>
-                                </View>
-                            ) : aggregatedChartData.steps.datasets[0].data.length > 0 ? (
-                                <LineChart
-                                    data={aggregatedChartData.steps}
-                                    width={screenWidth - 40}
-                                    height={220}
-                                    chartConfig={chartConfig}
-                                    bezier
-                                    style={styles.chart}
-                                />
-                            ) : (
-                                <View style={styles.noDataContainer}>
-                                    <Text style={styles.noDataText}>No steps data available</Text>
-                                </View>
-                            )}
-                        </View>
-
-                        <Text style={styles.sectionTitle}>Heart Rate This Week</Text>
-                        <View style={styles.chartContainer}>
-                            {chartsLoading ? (
-                                <View style={styles.loadingContainer}>
-                                    <Text style={styles.loadingText}>Loading chart...</Text>
-                                </View>
-                            ) : aggregatedChartData.heartRate.datasets[0].data.length > 0 ? (
-                                <LineChart
-                                    data={aggregatedChartData.heartRate}
-                                    width={screenWidth - 40}
-                                    height={220}
-                                    chartConfig={{
-                                        ...chartConfig,
-                                        color: (opacity = 1) => `rgba(233, 30, 99, ${opacity})`,
-                                    }}
-                                    style={styles.chart}
-                                />
-                            ) : (
-                                <View style={styles.noDataContainer}>
-                                    <Text style={styles.noDataText}>No heart rate data available</Text>
-                                </View>
-                            )}
-                        </View>
-
-                        <Text style={styles.sectionTitle}>Hydration This Week</Text>
-                        <View style={styles.chartContainer}>
-                            {chartsLoading ? (
-                                <View style={styles.loadingContainer}>
-                                    <Text style={styles.loadingText}>Loading chart...</Text>
-                                </View>
-                            ) : aggregatedChartData.hydration.datasets[0].data.length > 0 ? (
-                                <BarChart
-                                    data={aggregatedChartData.hydration}
-                                    width={screenWidth - 40}
-                                    height={220}
-                                    yAxisLabel=""
-                                    yAxisSuffix="ml"
-                                    chartConfig={{
-                                        ...chartConfig,
-                                        color: (opacity = 1) => `rgba(0, 188, 212, ${opacity})`,
-                                    }}
-                                    style={styles.chart}
-                                />
-                            ) : (
-                                <View style={styles.noDataContainer}>
-                                    <Text style={styles.noDataText}>No hydration data available</Text>
-                                </View>
-                            )}
-                        </View>
-
-                        <Text style={styles.sectionTitle}>Sleep Quality (Weekly)</Text>
-                        <View style={styles.chartContainer}>
-                            {chartsLoading ? (
-                                <View style={styles.loadingContainer}>
-                                    <Text style={styles.loadingText}>Loading chart...</Text>
-                                </View>
-                            ) : aggregatedChartData.sleep.length > 0 ? (
-                                <PieChart
-                                    data={aggregatedChartData.sleep}
-                                    width={screenWidth - 40}
-                                    height={220}
-                                    chartConfig={chartConfig}
-                                    accessor="population"
-                                    backgroundColor="transparent"
-                                    paddingLeft="15"
-                                    style={styles.chart}
-                                />
-                            ) : (
-                                <View style={styles.noDataContainer}>
-                                    <Text style={styles.noDataText}>No sleep data available</Text>
-                                </View>
-                            )}
-                        </View>
-                    </View>
-                )
-            case "vitals":
-                return (
-                    <View style={styles.tabContent}>
-                        <Text style={styles.sectionTitle}>Vital Signs</Text>
-                        <View style={styles.row}>
-                            <StatsCard
-                                title="Weight"
-                                value={formatHealthValue(healthData.weight, "weight")}
-                                unit="kg"
-                                icon="⚖️"
-                                color="#9C27B0"
-                                onAdd={() => openInputModal("weight")}
-                                canAdd={canWrite("Weight")}
-                                trend="down"
-                            />
-                            <StatsCard
-                                title="Height"
-                                value={formatHealthValue(healthData.height, "height")}
-                                unit="cm"
-                                icon="📏"
-                                color="#795548"
-                                onAdd={() => openInputModal("height")}
-                                canAdd={canWrite("Height")}
-                                trend="stable"
-                            />
-                        </View>
-                        <View style={styles.row}>
-                            <StatsCard
-                                title="Blood Pressure"
-                                value={
-                                    healthData.bloodPressure
-                                        ? `${healthData.bloodPressure.systolic}/${healthData.bloodPressure.diastolic}`
-                                        : "--"
-                                }
-                                unit="mmHg"
-                                icon="🩺"
-                                color="#F44336"
-                                onAdd={() => openInputModal("bloodPressure")}
-                                canAdd={canWrite("BloodPressure")}
-                                trend="stable"
-                            />
-                            <StatsCard
-                                title="Body Temp"
-                                value={formatHealthValue(healthData.bodyTemp, "bodyTemp")}
-                                unit="°C"
-                                icon="🌡️"
-                                color="#FF9800"
-                                onAdd={() => openInputModal("bodyTemp")}
-                                canAdd={canWrite("BodyTemperature")}
-                                trend="stable"
-                            />
-                        </View>
-                        <View style={styles.row}>
-                            <StatsCard
-                                title="Hydration"
-                                value={formatHealthValue(healthData.hydration, "hydration")}
-                                unit="ml"
-                                icon="💧"
-                                color="#00BCD4"
-                                onAdd={() => openInputModal("hydration")}
-                                canAdd={canWrite("Hydration")}
-                                progress={(healthData.hydration / 2500) * 100}
-                                target={2500}
-                                trend="up"
-                            />
-                            <StatsCard
-                                title="Sleep"
-                                value={formatHealthValue(healthData.sleepHours, "sleepHours")}
-                                unit="hours"
-                                icon="😴"
-                                color="#673AB7"
-                                onAdd={() => openInputModal("sleep")}
-                                canAdd={canWrite("SleepSession")}
-                                progress={(healthData.sleepHours / 8) * 100}
-                                target={8}
-                                trend="up"
-                            />
-                        </View>
-
-                        <Text style={styles.sectionTitle}>Weight Trend (Monthly)</Text>
-                        <View style={styles.chartContainer}>
-                            {chartsLoading ? (
-                                <View style={styles.loadingContainer}>
-                                    <Text style={styles.loadingText}>Loading chart...</Text>
-                                </View>
-                            ) : aggregatedChartData.weight.datasets[0].data.length > 0 ? (
-                                <LineChart
-                                    data={aggregatedChartData.weight}
-                                    width={screenWidth - 40}
-                                    height={220}
-                                    chartConfig={{
-                                        ...chartConfig,
-                                        color: (opacity = 1) => `rgba(156, 39, 176, ${opacity})`,
-                                    }}
-                                    style={styles.chart}
-                                />
-                            ) : (
-                                <View style={styles.noDataContainer}>
-                                    <Text style={styles.noDataText}>No weight data available</Text>
-                                </View>
-                            )}
-                        </View>
-                    </View>
-                )
-            default:
-                return null
         }
     }
 
@@ -1255,178 +836,271 @@ const HealthDashboard: React.FC = () => {
         <SafeAreaProvider>
             <SafeAreaView style={styles.safeArea}>
                 <ScrollView style={styles.container} refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} />}>
+                    {/* Modern Header */}
                     <View style={styles.header}>
-                        <Text style={styles.title}>Health Dashboard</Text>
-                        <Text style={styles.subtitle}>Your comprehensive health overview</Text>
-                        {permissions.length === 0 && (
+                        <View style={styles.headerContent}>
+                            <Text style={styles.title}>Health Dashboard</Text>
+                            <Text style={styles.subtitle}>Your wellness journey</Text>
+                        </View>
+                        {!hasEssentialPermissions && (
                             <TouchableOpacity style={styles.permissionPrompt} onPress={retryPermissions}>
-                                <Text style={styles.permissionPromptText}>Grant Health Permissions</Text>
+                                <Text style={styles.permissionPromptText}>Grant Permissions</Text>
                             </TouchableOpacity>
                         )}
                     </View>
 
-                    {/* Tab Navigation */}
-                    <View style={styles.tabContainer}>
-                        <TouchableOpacity
-                            style={[styles.tab, activeTab === "overview" && styles.activeTab]}
-                            onPress={() => setActiveTab("overview")}
-                        >
-                            <Text style={[styles.tabText, activeTab === "overview" && styles.activeTabText]}>Overview</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.tab, activeTab === "charts" && styles.activeTab]}
-                            onPress={() => setActiveTab("charts")}
-                        >
-                            <Text style={[styles.tabText, activeTab === "charts" && styles.activeTabText]}>Charts</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.tab, activeTab === "vitals" && styles.activeTab]}
-                            onPress={() => setActiveTab("vitals")}
-                        >
-                            <Text style={[styles.tabText, activeTab === "vitals" && styles.activeTabText]}>Vitals</Text>
-                        </TouchableOpacity>
+                    {/* Health Overview Cards */}
+                    <View style={styles.statsContainer}>
+                        <Text style={styles.sectionTitle}>Today's Overview</Text>
+                        
+                        <View style={styles.row}>
+                            <StatsCard
+                                title="Steps"
+                                value={formatHealthValue(healthData.steps, "steps")}
+                                unit="steps"
+                                icon="👟"
+                                color="#4A90E2"
+                                progress={(healthData.steps / 10000) * 100}
+                                target={10000}
+                                trend={healthData.steps > 8000 ? "up" : "stable"}
+                            />
+                            <StatsCard
+                                title="Heart Rate"
+                                value={formatHealthValue(healthData.heartRate, "heartRate")}
+                                unit="bpm"
+                                icon="❤️"
+                                color="#F5A623"
+                                canAdd
+                                onAdd={() => openInputModal("heartRate")}
+                                trend="stable"
+                            />
+                        </View>
+
+                        <View style={styles.row}>
+                            <StatsCard
+                                title="Weight"
+                                value={formatHealthValue(healthData.weight, "weight")}
+                                unit="kg"
+                                icon="⚖️"
+                                color="#7ED321"
+                                canAdd
+                                onAdd={() => openInputModal("weight")}
+                                trend="stable"
+                            />
+                            <StatsCard
+                                title="Hydration"
+                                value={formatHealthValue(healthData.hydration, "hydration")}
+                                unit="ml"
+                                icon="💧"
+                                color="#50E3C2"
+                                progress={(healthData.hydration / 2000) * 100}
+                                target={2000}
+                                canAdd
+                                onAdd={() => openInputModal("hydration")}
+                                trend={healthData.hydration > 1500 ? "up" : "down"}
+                            />
+                        </View>
+
+                        <View style={styles.row}>
+                            <StatsCard
+                                title="Distance"
+                                value={formatHealthValue(healthData.distance, "distance")}
+                                unit="km"
+                                icon="🏃"
+                                color="#BD10E0"
+                                trend="up"
+                            />
+                            <StatsCard
+                                title="Temperature"
+                                value={formatHealthValue(healthData.bodyTemp, "bodyTemp")}
+                                unit="°C"
+                                icon="🌡️"
+                                color="#FF6B6B"
+                                canAdd
+                                onAdd={() => openInputModal("bodyTemp")}
+                                trend="stable"
+                            />
+                        </View>
+
+                        {healthData.bloodPressure && (
+                            <View style={styles.row}>
+                                <StatsCard
+                                    title="Blood Pressure"
+                                    value={`${healthData.bloodPressure.systolic}/${healthData.bloodPressure.diastolic}`}
+                                    unit="mmHg"
+                                    icon="🩺"
+                                    color="#FF9500"
+                                    canAdd
+                                    onAdd={() => openInputModal("bloodPressure")}
+                                    trend="stable"
+                                />
+                                <StatsCard
+                                    title="Height"
+                                    value={formatHealthValue(healthData.height, "height")}
+                                    unit="cm"
+                                    icon="📏"
+                                    color="#5856D6"
+                                    canAdd
+                                    onAdd={() => openInputModal("height")}
+                                />
+                            </View>
+                        )}
                     </View>
 
-                    {/* Tab Content */}
-                    <View style={styles.statsContainer}>{renderTabContent()}</View>
+                    {/* Charts Section */}
+                    <View style={styles.statsContainer}>
+                        <Text style={styles.sectionTitle}>Weekly Trends</Text>
+                        
+                        {chartsLoading ? (
+                            <View style={styles.loadingContainer}>
+                                <Text style={styles.loadingText}>Loading charts...</Text>
+                            </View>
+                        ) : (
+                            <>
+                                {aggregatedChartData.steps.labels.length > 0 && (
+                                    <View style={styles.chartContainer}>
+                                        <Text style={styles.chartTitle}>Steps Progress</Text>
+                                        <LineChart
+                                            data={aggregatedChartData.steps}
+                                            width={screenWidth - 50}
+                                            height={200}
+                                            chartConfig={{
+                                                ...chartConfig,
+                                                color: (opacity = 1) => `rgba(74, 144, 226, ${opacity})`,
+                                            }}
+                                            style={styles.chart}
+                                        />
+                                    </View>
+                                )}
+
+                                {aggregatedChartData.heartRate.labels.length > 0 && (
+                                    <View style={styles.chartContainer}>
+                                        <Text style={styles.chartTitle}>Heart Rate Trends</Text>
+                                        <LineChart
+                                            data={aggregatedChartData.heartRate}
+                                            width={screenWidth - 50}
+                                            height={200}
+                                            chartConfig={{
+                                                ...chartConfig,
+                                                color: (opacity = 1) => `rgba(245, 166, 35, ${opacity})`,
+                                            }}
+                                            style={styles.chart}
+                                        />
+                                    </View>
+                                )}
+
+                                {aggregatedChartData.hydration.labels.length > 0 && (
+                                    <View style={styles.chartContainer}>
+                                        <Text style={styles.chartTitle}>Hydration Levels</Text>
+                                        <LineChart
+                                            data={aggregatedChartData.hydration}
+                                            width={screenWidth - 50}
+                                            height={200}
+                                            chartConfig={{
+                                                ...chartConfig,
+                                                color: (opacity = 1) => `rgba(80, 227, 194, ${opacity})`,
+                                            }}
+                                            style={styles.chart}
+                                        />
+                                    </View>
+                                )}
+                            </>
+                        )}
+                    </View>
 
                     <View style={styles.footer}>
-                        <Text style={styles.footerText}>
-                            Data from Google Health Connect • Last updated: {new Date().toLocaleTimeString()}
-                        </Text>
+                        <Text style={styles.footerText}>Health data synced with Health Connect</Text>
                     </View>
 
-                    {/* Input Modal - Keep your existing modal code */}
+                    {/* Input Modal */}
                     <Modal visible={showInputModal} animationType="slide" transparent>
                         <View style={styles.modalContainer}>
                             <View style={styles.modalContent}>
                                 <Text style={styles.modalTitle}>
-                                    Enter{" "}
-                                    {inputType === "bloodPressure"
-                                        ? "Blood Pressure"
-                                        : inputType === "bodyTemp"
-                                            ? "Body Temperature"
-                                            : inputType === "heartRate"
-                                                ? "Heart Rate"
-                                                : inputType === "sleep"
-                                                    ? "Sleep Times"
-                                                    : inputType.charAt(0).toUpperCase() + inputType.slice(1)}
+                                    Add {inputType === "bloodPressure" ? "Blood Pressure" : inputType === "bodyTemp" ? "Body Temperature" : inputType === "heartRate" ? "Heart Rate" : inputType}
                                 </Text>
-                                {inputType === "sleep" ? (
-                                    <View>
-                                        <Text style={styles.timeLabel}>Sleep Start Time:</Text>
-                                        <TouchableOpacity style={styles.timeButton} onPress={() => setShowStartTimePicker(true)}>
-                                            <Text style={styles.timeButtonText}>
-                                                {sleepStartTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                            </Text>
-                                        </TouchableOpacity>
-                                        <Text style={styles.timeLabel}>Sleep End Time:</Text>
-                                        <TouchableOpacity style={styles.timeButton} onPress={() => setShowEndTimePicker(true)}>
-                                            <Text style={styles.timeButtonText}>
-                                                {sleepEndTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                            </Text>
-                                        </TouchableOpacity>
-                                        {showStartTimePicker && (
-                                            <DateTimePicker
-                                                value={sleepStartTime}
-                                                mode="time"
-                                                is24Hour={false}
-                                                display="default"
-                                                onChange={(event, selectedTime) => {
-                                                    setShowStartTimePicker(false)
-                                                    if (selectedTime) {
-                                                        setSleepStartTime(selectedTime)
-                                                    }
-                                                }}
-                                            />
-                                        )}
-                                        {showEndTimePicker && (
-                                            <DateTimePicker
-                                                value={sleepEndTime}
-                                                mode="time"
-                                                is24Hour={false}
-                                                display="default"
-                                                onChange={(event, selectedTime) => {
-                                                    setShowEndTimePicker(false)
-                                                    if (selectedTime) {
-                                                        const newEndTime = selectedTime
-                                                        if (newEndTime <= sleepStartTime) {
-                                                            newEndTime.setDate(newEndTime.getDate() + 1)
-                                                        }
-                                                        setSleepEndTime(newEndTime)
-                                                    }
-                                                }}
-                                            />
-                                        )}
-                                    </View>
-                                ) : (
-                                    <View>
+                                
+                                {inputType === "bloodPressure" ? (
+                                    <>
                                         <TextInput
                                             style={styles.input}
-                                            placeholder={
-                                                inputType === "heartRate"
-                                                    ? "Heart rate (bpm)"
-                                                    : inputType === "weight"
-                                                        ? "Weight (kg)"
-                                                        : inputType === "height"
-                                                            ? "Height (cm)"
-                                                            : inputType === "bloodPressure"
-                                                                ? "Systolic (mmHg)"
-                                                                : inputType === "bodyTemp"
-                                                                    ? "Temperature (°C)"
-                                                                    : inputType === "hydration"
-                                                                        ? "Volume (ml)"
-                                                                        : `Enter ${inputType}`
-                                            }
-                                            keyboardType="numeric"
+                                            placeholder="Systolic (e.g., 120)"
                                             value={inputValue}
                                             onChangeText={setInputValue}
+                                            keyboardType="numeric"
                                         />
-
-                                        {inputType === "bloodPressure" && (
-                                            <TextInput
-                                                style={styles.input}
-                                                placeholder="Diastolic (mmHg)"
-                                                keyboardType="numeric"
-                                                value={inputValue2}
-                                                onChangeText={setInputValue2}
-                                            />
-                                        )}
-                                    </View>
+                                        <TextInput
+                                            style={styles.input}
+                                            placeholder="Diastolic (e.g., 80)"
+                                            value={inputValue2}
+                                            onChangeText={setInputValue2}
+                                            keyboardType="numeric"
+                                        />
+                                    </>
+                                ) : (
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder={
+                                            inputType === "weight" ? "Weight in kg (e.g., 70.5)" :
+                                            inputType === "height" ? "Height in cm (e.g., 175)" :
+                                            inputType === "heartRate" ? "Heart rate (e.g., 72)" :
+                                            inputType === "bodyTemp" ? "Temperature in °C (e.g., 36.8)" :
+                                            inputType === "hydration" ? "Water in ml (e.g., 250)" :
+                                            "Enter value"
+                                        }
+                                        value={inputValue}
+                                        onChangeText={setInputValue}
+                                        keyboardType="numeric"
+                                    />
                                 )}
+
                                 <View style={styles.modalButtons}>
-                                    <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={closeInputModal}>
+                                    <TouchableOpacity 
+                                        style={[styles.modalButton, styles.cancelButton]} 
+                                        onPress={closeInputModal}
+                                    >
                                         <Text style={[styles.modalButtonText, styles.cancelButtonText]}>Cancel</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity
-                                        style={[styles.modalButton, styles.saveButton, saving && styles.saveButtonDisabled]}
+                                    <TouchableOpacity 
+                                        style={[
+                                            styles.modalButton, 
+                                            styles.saveButton,
+                                            saving && styles.saveButtonDisabled
+                                        ]} 
                                         onPress={saveHealthData}
                                         disabled={saving}
                                     >
-                                        <Text style={[styles.modalButtonText, styles.saveButtonText]}>{saving ? "Saving..." : "Save"}</Text>
+                                        <Text style={[styles.modalButtonText, styles.saveButtonText]}>
+                                            {saving ? "Saving..." : "Save"}
+                                        </Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>
                         </View>
                     </Modal>
 
-                    {/* Permission Modal - Keep your existing modal code */}
+                    {/* Permission Modal */}
                     <Modal visible={showPermissionModal} animationType="slide" transparent>
                         <View style={styles.modalContainer}>
                             <View style={styles.modalContent}>
                                 <Text style={styles.modalTitle}>Health Connect Permissions</Text>
                                 <Text style={styles.permissionModalText}>
-                                    To display your health data, this app needs access to Health Connect.
+                                    To provide accurate health insights, this app needs access to your health data through Health Connect.
                                     {"\n\n"}
-                                    You can grant essential permissions for basic functionality, or all permissions for complete health
-                                    tracking.
+                                    Your privacy is important - data stays on your device.
                                 </Text>
                                 <View style={styles.modalButtons}>
-                                    <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={skipPermissions}>
+                                    <TouchableOpacity 
+                                        style={[styles.modalButton, styles.cancelButton]} 
+                                        onPress={skipPermissions}
+                                    >
                                         <Text style={[styles.modalButtonText, styles.cancelButtonText]}>Skip</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={retryPermissions}>
-                                        <Text style={[styles.modalButtonText, styles.saveButtonText]}>Grant Permissions</Text>
+                                    <TouchableOpacity 
+                                        style={[styles.modalButton, styles.saveButton]} 
+                                        onPress={retryPermissions}
+                                    >
+                                        <Text style={[styles.modalButtonText, styles.saveButtonText]}>Grant Access</Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>
@@ -1441,305 +1115,290 @@ const HealthDashboard: React.FC = () => {
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: "#2196F3",
+        backgroundColor: "#6C63FF",
     },
     container: {
         flex: 1,
-        backgroundColor: "#f5f5f5",
+        backgroundColor: "#F8F9FA",
     },
     centerContainer: {
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
         padding: 20,
-        backgroundColor: "#f5f5f5",
+        backgroundColor: "#F8F9FA",
     },
     header: {
-        padding: 20,
-        paddingTop: 10,
-        backgroundColor: "#2196F3",
-        borderBottomLeftRadius: 20,
-        borderBottomRightRadius: 20,
+        padding: 24,
+        paddingTop: 16,
+        backgroundColor: "#6C63FF",
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        shadowColor: "#6C63FF",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 8,
+    },
+    headerContent: {
+        flex: 1,
     },
     title: {
-        fontSize: 28,
-        fontWeight: "bold",
+        fontSize: 32,
+        fontWeight: "700",
         color: "white",
-        textAlign: "center",
+        marginBottom: 4,
     },
     subtitle: {
         fontSize: 16,
         color: "rgba(255, 255, 255, 0.8)",
-        textAlign: "center",
-        marginTop: 5,
+        fontWeight: "400",
     },
     centerTitle: {
-        fontSize: 28,
-        fontWeight: "bold",
+        fontSize: 32,
+        fontWeight: "700",
         color: "#333",
         textAlign: "center",
+        marginBottom: 8,
     },
     centerSubtitle: {
         fontSize: 16,
         color: "#666",
         textAlign: "center",
-        marginTop: 5,
-        marginBottom: 20,
+        marginBottom: 24,
     },
     button: {
-        backgroundColor: "#2196F3",
-        paddingHorizontal: 15,
-        paddingVertical: 10,
-        borderRadius: 8,
-        minWidth: 100,
+        backgroundColor: "#6C63FF",
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: 12,
+        shadowColor: "#6C63FF",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 4,
     },
     buttonText: {
         color: "white",
-        fontSize: 12,
+        fontSize: 16,
         fontWeight: "600",
         textAlign: "center",
     },
-    tabContainer: {
-        flexDirection: "row",
-        backgroundColor: "white",
-        marginHorizontal: 15,
-        marginTop: 15,
-        borderRadius: 10,
-        elevation: 2,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-    },
-    tab: {
-        flex: 1,
-        paddingVertical: 15,
-        alignItems: "center",
-        borderRadius: 10,
-    },
-    activeTab: {
-        backgroundColor: "#2196F3",
-    },
-    tabText: {
-        fontSize: 14,
-        fontWeight: "600",
-        color: "#666",
-    },
-    activeTabText: {
-        color: "white",
-    },
-    tabContent: {
-        flex: 1,
-    },
     statsContainer: {
-        padding: 15,
+        padding: 20,
     },
     sectionTitle: {
-        fontSize: 18,
-        fontWeight: "bold",
-        marginBottom: 15,
-        marginTop: 10,
-        color: "#333",
+        fontSize: 24,
+        fontWeight: "700",
+        marginBottom: 20,
+        color: "#2D3748",
     },
     row: {
         flexDirection: "row",
         justifyContent: "space-between",
-        marginBottom: 15,
+        marginBottom: 16,
+        gap: 12,
     },
     card: {
         backgroundColor: "white",
-        borderRadius: 12,
-        padding: 15,
+        borderRadius: 16,
+        padding: 20,
         flex: 1,
-        marginHorizontal: 5,
         borderLeftWidth: 4,
-        elevation: 3,
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
-        shadowRadius: 4,
+        shadowRadius: 8,
+        elevation: 4,
     },
     cardHeader: {
         flexDirection: "row",
         alignItems: "center",
-        marginBottom: 8,
+        marginBottom: 12,
     },
     cardIcon: {
-        fontSize: 20,
-        marginRight: 8,
+        fontSize: 24,
+        marginRight: 12,
     },
     cardTitle: {
         fontSize: 14,
-        color: "#666",
-        fontWeight: "500",
+        color: "#718096",
+        fontWeight: "600",
+        flex: 1,
     },
     cardValue: {
-        fontSize: 24,
-        fontWeight: "bold",
-        marginBottom: 2,
+        fontSize: 28,
+        fontWeight: "700",
+        marginBottom: 4,
     },
     cardUnit: {
-        fontSize: 12,
-        color: "#999",
+        fontSize: 14,
+        color: "#A0AEC0",
+        fontWeight: "500",
     },
     progressContainer: {
         flexDirection: "row",
         alignItems: "center",
-        marginTop: 8,
+        marginTop: 12,
     },
     progressBar: {
         flex: 1,
-        height: 6,
-        backgroundColor: "#f0f0f0",
-        borderRadius: 3,
-        marginRight: 8,
+        height: 8,
+        backgroundColor: "#F1F5F9",
+        borderRadius: 4,
+        marginRight: 12,
     },
     progressFill: {
         height: "100%",
-        borderRadius: 3,
+        borderRadius: 4,
     },
     progressText: {
-        fontSize: 10,
-        color: "#666",
+        fontSize: 12,
+        color: "#718096",
         fontWeight: "600",
     },
     trendContainer: {
         flexDirection: "row",
         alignItems: "center",
-        marginTop: 5,
+        marginTop: 8,
     },
     trendIcon: {
-        fontSize: 12,
-        marginRight: 4,
+        fontSize: 14,
+        marginRight: 6,
     },
     trendText: {
-        fontSize: 10,
-        color: "#666",
+        fontSize: 12,
+        color: "#718096",
+        fontWeight: "500",
     },
     chartContainer: {
         backgroundColor: "white",
-        borderRadius: 12,
+        borderRadius: 16,
         marginBottom: 20,
-        elevation: 3,
+        paddingVertical: 16,
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
-        shadowRadius: 4,
-        overflow: "hidden",
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    chartTitle: {
+        fontSize: 18,
+        fontWeight: "600",
+        color: "#2D3748",
+        marginBottom: 12,
+        marginLeft: 20,
     },
     chart: {
-        marginVertical: 8,
-        borderRadius: 12,
+        borderRadius: 16,
     },
     footer: {
-        padding: 20,
+        padding: 24,
         alignItems: "center",
     },
     footerText: {
-        fontSize: 12,
-        color: "#666",
+        fontSize: 14,
+        color: "#A0AEC0",
         textAlign: "center",
+        fontWeight: "500",
     },
     addButton: {
-        backgroundColor: "#2196F3",
         borderRadius: 12,
-        width: 24,
-        height: 24,
+        width: 28,
+        height: 28,
         justifyContent: "center",
         alignItems: "center",
-        marginLeft: "auto",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 2,
+        elevation: 2,
     },
     addButtonText: {
         color: "white",
-        fontSize: 16,
-        fontWeight: "bold",
+        fontSize: 18,
+        fontWeight: "600",
     },
     modalContainer: {
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
-        backgroundColor: "rgba(0,0,0,0.5)",
+        backgroundColor: "rgba(0,0,0,0.6)",
     },
     modalContent: {
         backgroundColor: "white",
         borderRadius: 20,
-        padding: 20,
-        width: "80%",
-        maxWidth: 300,
+        padding: 24,
+        width: "85%",
+        maxWidth: 350,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 16,
+        elevation: 16,
     },
     modalTitle: {
-        fontSize: 18,
-        fontWeight: "bold",
-        marginBottom: 15,
+        fontSize: 20,
+        fontWeight: "700",
+        marginBottom: 20,
         textAlign: "center",
-        color: "#333",
+        color: "#2D3748",
     },
     input: {
         borderWidth: 1,
-        borderColor: "#ddd",
-        borderRadius: 8,
-        padding: 12,
-        marginBottom: 15,
+        borderColor: "#E2E8F0",
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 16,
         fontSize: 16,
+        backgroundColor: "#F8F9FA",
     },
     modalButtons: {
         flexDirection: "row",
-        justifyContent: "space-between",
+        gap: 12,
     },
     modalButton: {
         flex: 1,
-        padding: 12,
-        borderRadius: 8,
-        marginHorizontal: 5,
+        padding: 16,
+        borderRadius: 12,
+        alignItems: "center",
     },
     cancelButton: {
-        backgroundColor: "#f0f0f0",
+        backgroundColor: "#F1F5F9",
     },
     saveButton: {
-        backgroundColor: "#2196F3",
+        backgroundColor: "#6C63FF",
+        shadowColor: "#6C63FF",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 4,
     },
     saveButtonDisabled: {
-        backgroundColor: "#ccc",
+        backgroundColor: "#CBD5E0",
+        shadowOpacity: 0,
+        elevation: 0,
     },
     modalButtonText: {
-        textAlign: "center",
         fontSize: 16,
         fontWeight: "600",
     },
     cancelButtonText: {
-        color: "#666",
+        color: "#718096",
     },
     saveButtonText: {
         color: "white",
     },
-    timeLabel: {
-        fontSize: 16,
-        fontWeight: "600",
-        color: "#333",
-        marginBottom: 8,
-        marginTop: 10,
-    },
-    timeButton: {
-        backgroundColor: "#f0f0f0",
-        borderRadius: 8,
-        padding: 15,
-        marginBottom: 15,
-        alignItems: "center",
-        borderWidth: 1,
-        borderColor: "#ddd",
-    },
-    timeButtonText: {
-        fontSize: 18,
-        fontWeight: "600",
-        color: "#333",
-    },
     permissionPrompt: {
         backgroundColor: "rgba(255, 255, 255, 0.2)",
-        borderRadius: 8,
-        paddingHorizontal: 15,
+        borderRadius: 12,
+        paddingHorizontal: 16,
         paddingVertical: 8,
-        marginTop: 10,
-        alignSelf: "center",
+        borderWidth: 1,
+        borderColor: "rgba(255, 255, 255, 0.3)",
     },
     permissionPromptText: {
         color: "white",
@@ -1748,32 +1407,19 @@ const styles = StyleSheet.create({
     },
     permissionModalText: {
         fontSize: 16,
-        color: "#666",
+        color: "#718096",
         textAlign: "center",
-        marginBottom: 20,
-        lineHeight: 22,
-    },
-    noDataContainer: {
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 40,
-    },
-    noDataText: {
-        fontSize: 16,
-        color: "#666",
-        textAlign: "center",
+        marginBottom: 24,
+        lineHeight: 24,
     },
     loadingContainer: {
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
         padding: 40,
+        alignItems: "center",
     },
     loadingText: {
         fontSize: 16,
-        color: "#2196F3",
-        textAlign: "center",
+        color: "#6C63FF",
+        fontWeight: "500",
     },
 })
 
