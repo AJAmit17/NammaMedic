@@ -360,7 +360,7 @@ export default function ProfileScreen() {
     const generateNewAccess = async () => {
         const newShareId = generateUniqueId();
         const expiryTime = Date.now() + (5 * 60 * 1000);
-        const newShareableLink = `https://namma-medic.vercel.app/api/patient/${newShareId}`;
+        const newShareableLink = `https://namma-medic.vercel.app/patient/${newShareId}`;
 
         await AsyncStorage.setItem('userShareId', newShareId);
         await AsyncStorage.setItem('accessExpiry', expiryTime.toString());
