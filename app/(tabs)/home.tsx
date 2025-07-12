@@ -498,12 +498,20 @@ export default function HomeScreen() {
             onPress={async () => {
               await sendTestNotification();
               Alert.alert("Success", "Test notification has been sent!");
-            }}
+            }}<
             style={styles.emergencyStopButton}
           >
             <Text style={styles.emergencyStopText}>🧪 Send Test Notification</Text>
           </TouchableOpacity>
         </View> */}
+
+        <View>
+          <TouchableOpacity>
+            <Link href="/test" asChild>
+              <Text style={styles.addMedicationButton}>➕ Add New Medication</Text>
+            </Link>
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>

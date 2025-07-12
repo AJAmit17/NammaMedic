@@ -1,7 +1,5 @@
-"use client"
-
 import { useState, useEffect } from "react"
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Dimensions, Animated, Modal } from "react-native"
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Dimensions, Animated } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { LinearGradient } from "expo-linear-gradient"
 import AsyncStorage from "@react-native-async-storage/async-storage"
@@ -16,14 +14,15 @@ import {
     RecordingMethod,
     DeviceType,
 } from "react-native-health-connect"
-import { scheduleWaterReminders, isWaterRemindersSetup } from "../../utils/notifications"
-import { checkPermissionStatus } from "../../utils/healthUtils"
+import { scheduleWaterReminders, isWaterRemindersSetup } from "@/utils/notifications"
+import { 
+    checkPermissionStatus, 
+    requestEssentialPermissionsWithSettings
+} from "@/utils/healthUtils"
 
 const { width, height } = Dimensions.get("window")
 
-// Configure notifications
 Notifications.setNotificationHandler({
-
     handleNotification: async () => ({
         shouldShowAlert: true,
         shouldPlaySound: true,
@@ -135,12 +134,8 @@ function WaterBottle({ intake, goal }: WaterIntakeProps) {
 export default function WaterScreen() {
     const [waterIntake, setWaterIntake] = useState(0)
     const [dailyGoal] = useState(8) // 8 glasses per day
-    const [lastReminderTime, setLastReminderTime] = useState<Date | null>(null)
     const [nextReminderTime, setNextReminderTime] = useState<Date | null>(null)
     const [animatedValue] = useState(new Animated.Value(0))
-    const [reminderInterval, setReminderInterval] = useState(2) // hours
-    const [showMonthlyStats, setShowMonthlyStats] = useState(false)
-    const [monthlyData, setMonthlyData] = useState<{ [key: string]: number }>({})
     const [isHealthConnectInitialized, setIsHealthConnectInitialized] = useState(false)
     const [healthPermissions, setHealthPermissions] = useState<any[]>([])
     const [waterRecordIds, setWaterRecordIds] = useState<string[]>([])
@@ -150,44 +145,6 @@ export default function WaterScreen() {
     const getTodayKey = () => {
         const today = new Date()
         return `water_${today.getFullYear()}_${today.getMonth()}_${today.getDate()}`
-    }
-
-    // Get monthly data key
-    const getMonthlyKey = () => {
-        const today = new Date()
-        return `water_monthly_${today.getFullYear()}_${today.getMonth()}`
-    }
-
-    // Load monthly hydration data
-    const loadMonthlyData = async () => {
-        try {
-            const monthlyKey = getMonthlyKey()
-            const savedData = await AsyncStorage.getItem(monthlyKey)
-            if (savedData) {
-                setMonthlyData(JSON.parse(savedData))
-            }
-        } catch (error) {
-            console.error("Error loading monthly data:", error)
-        }
-    }
-
-    // Save monthly hydration data
-    const saveMonthlyData = async (data: { [key: string]: number }) => {
-        try {
-            const monthlyKey = getMonthlyKey()
-            await AsyncStorage.setItem(monthlyKey, JSON.stringify(data))
-        } catch (error) {
-            console.error("Error saving monthly data:", error)
-        }
-    }
-
-    // Update monthly data with today's intake
-    const updateMonthlyData = async (intake: number) => {
-        const today = new Date()
-        const dayKey = `${today.getDate()}`
-        const updatedData = { ...monthlyData, [dayKey]: intake }
-        setMonthlyData(updatedData)
-        await saveMonthlyData(updatedData)
     }
 
     // Load saved water intake for today
@@ -208,7 +165,6 @@ export default function WaterScreen() {
         try {
             const todayKey = getTodayKey()
             await AsyncStorage.setItem(todayKey, intake.toString())
-            await updateMonthlyData(intake)
         } catch (error) {
             console.error("Error saving water intake:", error)
         }
@@ -296,6 +252,17 @@ export default function WaterScreen() {
             setHealthPermissions(granted);
         } catch (error) {
             console.error('Error checking health permissions:', error);
+        }
+    };
+
+    // Request Health Connect permissions
+    const requestHealthPermissions = async () => {
+        try {
+            await requestEssentialPermissionsWithSettings();
+            // After requesting permissions, check what was granted
+            await checkHealthPermissions();
+        } catch (error) {
+            console.error('Error requesting health permissions:', error);
         }
     };
 
@@ -448,7 +415,6 @@ export default function WaterScreen() {
 
     useEffect(() => {
         loadWaterIntake()
-        loadMonthlyData()
         setupWaterReminders()
         initializeHealthConnect()
         loadWaterRecordIds()
@@ -476,108 +442,14 @@ export default function WaterScreen() {
             <LinearGradient colors={["#0288D1", "#0277BD", "#01579B"]} style={styles.header}>
                 <View style={styles.headerContent}>
                     <View style={styles.headerTop}>
+                        <View style={{ width: 40 }} />
                         <Text style={styles.greeting}>Daily Hydration</Text>
-                        <TouchableOpacity style={styles.infoButton} onPress={() => setShowMonthlyStats(true)} activeOpacity={0.7}>
-                            <Ionicons name="information-circle-outline" size={24} color="white" />
-                        </TouchableOpacity>
+                        <View style={{ width: 40 }} />
                     </View>
                     <WaterBottle intake={waterIntake} goal={dailyGoal} />
                     <Text style={styles.motivationalText}>{getMotivationalMessage()}</Text>
                 </View>
             </LinearGradient>
-
-            {/* Monthly Stats Modal */}
-            <Modal
-                visible={showMonthlyStats}
-                animationType="slide"
-                presentationStyle="pageSheet"
-                onRequestClose={() => setShowMonthlyStats(false)}
-            >
-                <View style={styles.modalContainer}>
-                    <View style={styles.modalHeader}>
-                        <Text style={styles.modalTitle}>Monthly Hydration Overview</Text>
-                        <TouchableOpacity style={styles.closeButton} onPress={() => setShowMonthlyStats(false)}>
-                            <Ionicons name="close" size={24} color="#666" />
-                        </TouchableOpacity>
-                    </View>
-
-                    <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-                        <View style={styles.monthlyStatsGrid}>
-                            {Array.from({ length: 31 }, (_, i) => {
-                                const day = i + 1
-                                const dayKey = day.toString()
-                                const intake = monthlyData[dayKey] || 0
-                                const progress = Math.min(intake / dailyGoal, 1)
-                                const today = new Date().getDate()
-                                const isToday = day === today
-
-                                return (
-                                    <View
-                                        key={day}
-                                        style={[styles.dayCard, isToday && styles.todayCard, progress >= 1 && styles.completedCard]}
-                                    >
-                                        <Text
-                                            style={[styles.dayNumber, isToday && styles.todayText, progress >= 1 && styles.completedText]}
-                                        >
-                                            {day}
-                                        </Text>
-                                        <View style={styles.dayProgress}>
-                                            <View
-                                                style={[
-                                                    styles.dayProgressFill,
-                                                    { width: `${progress * 100}%` },
-                                                    progress >= 1 && styles.completedProgress,
-                                                ]}
-                                            />
-                                        </View>
-                                        <Text
-                                            style={[styles.dayIntake, isToday && styles.todayText, progress >= 1 && styles.completedText]}
-                                        >
-                                            {intake}
-                                        </Text>
-                                    </View>
-                                )
-                            })}
-                        </View>
-
-                        <View style={styles.monthlyStats}>
-                            <Text style={styles.statsTitle}>This Month's Summary</Text>
-                            <View style={styles.statsSummary}>
-                                <View style={styles.summaryCard}>
-                                    <Text style={styles.summaryNumber}>
-                                        {Object.values(monthlyData).reduce((sum, val) => sum + val, 0)}
-                                    </Text>
-                                    <Text style={styles.summaryLabel}>Total Glasses</Text>
-                                </View>
-                                <View style={styles.summaryCard}>
-                                    <Text style={styles.summaryNumber}>
-                                        {Object.values(monthlyData).reduce((sum, val) => sum + val, 0) * WATER_GLASS_ML}
-                                    </Text>
-                                    <Text style={styles.summaryLabel}>Total ml</Text>
-                                </View>
-                                <View style={styles.summaryCard}>
-                                    <Text style={styles.summaryNumber}>
-                                        {Object.values(monthlyData).filter((val) => val >= dailyGoal).length}
-                                    </Text>
-                                    <Text style={styles.summaryLabel}>Goals Met</Text>
-                                </View>
-                                <View style={styles.summaryCard}>
-                                    <Text style={styles.summaryNumber}>
-                                        {Object.keys(monthlyData).length > 0
-                                            ? Math.round(
-                                                (Object.values(monthlyData).reduce((sum, val) => sum + val, 0) /
-                                                    Object.keys(monthlyData).length) *
-                                                10,
-                                            ) / 10
-                                            : 0}
-                                    </Text>
-                                    <Text style={styles.summaryLabel}>Daily Average</Text>
-                                </View>
-                            </View>
-                        </View>
-                    </ScrollView>
-                </View>
-            </Modal>
 
             <View style={styles.content}>
                 {/* Quick Actions */}
@@ -603,6 +475,27 @@ export default function WaterScreen() {
                         </TouchableOpacity>
                     </View>
                 </View>
+
+                {/* Health Connect Integration */}
+                {isHealthConnectInitialized && !canWriteHydration() && (
+                    <View style={styles.infoCard}>
+                        <Ionicons name="heart-outline" size={24} color="#0277BD" />
+                        <View style={styles.infoContent}>
+                            <Text style={styles.infoTitle}>Connect to Health App</Text>
+                            <Text style={styles.infoText}>
+                                Sync your water intake with your health data for better tracking and insights.
+                            </Text>
+                            <TouchableOpacity 
+                                style={[styles.actionButton, { marginTop: 10, backgroundColor: "#0277BD" }]} 
+                                onPress={requestHealthPermissions}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons name="link" size={20} color="white" />
+                                <Text style={[styles.buttonText, { fontSize: 14 }]}>Grant Permissions</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
 
                 {/* Progress Stats */}
                 <View style={styles.statsContainer}>
@@ -714,7 +607,7 @@ const styles = StyleSheet.create({
         backgroundColor: "#f8f9fa",
     },
     header: {
-        paddingTop: 50,
+        paddingTop: 40, // Significantly reduced to move title closer to notch
         paddingBottom: 15, // Reduced from 25 to decrease gap
         borderBottomLeftRadius: 30,
         borderBottomRightRadius: 30,
@@ -722,31 +615,31 @@ const styles = StyleSheet.create({
     },
     headerContent: {
         alignItems: "center",
-        paddingHorizontal: 20,
+        paddingHorizontal: 0,
+        paddingTop: 5, // Reduced from 20 to move title closer to top
     },
     headerTop: {
         flexDirection: "row",
-        justifyContent: "center",
+        justifyContent: "space-between",
         alignItems: "center",
+        width: "100%",
+        paddingHorizontal: 20,
+        position: "relative",
     },
     infoButton: {
         width: 40,
         height: 40,
         borderRadius: 20,
-        textAlign: "center",
         backgroundColor: "rgba(255, 255, 255, 0.2)",
         justifyContent: "center",
         alignItems: "center",
-        position: "absolute",
-        right: 0,
-        zIndex: 1,
     },
     greeting: {
         fontSize: 24,
         fontWeight: "700",
-        paddingTop: 20,
         color: "white",
         textAlign: "center",
+        flex: 1,
     },
     motivationalText: {
         fontSize: 16,
@@ -797,7 +690,18 @@ const styles = StyleSheet.create({
     bottleCap: {
         position: "absolute",
         top: 0,
-        width: "29%" // Match the bottle outline proportions
+        width: "25%",
+        height: 20,
+        backgroundColor: "rgba(255, 255, 255, 0.7)",
+        borderRadius: 8,
+        borderBottomLeftRadius: 3,
+        borderBottomRightRadius: 3,
+        alignSelf: "center",
+        shadowColor: "rgba(0, 0, 0, 0.2)",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 3,
+        elevation: 3,
     },
     wave: {
         position: "absolute",
@@ -978,134 +882,6 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: "#424242",
         lineHeight: 20,
-    },
-    // Modal styles
-    modalContainer: {
-        flex: 1,
-        backgroundColor: 'white',
-        paddingTop: 50,
-    },
-    modalHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 20,
-        paddingHorizontal: 20,
-        paddingBottom: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    modalTitle: {
-        fontSize: 20,
-        fontWeight: '700',
-        color: '#333',
-        flex: 1,
-        paddingHorizontal: 20,
-    },
-    closeButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: '#f5f5f5',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    modalBody: {
-        flex: 1,
-        paddingHorizontal: 20,
-        backgroundColor: '#f8f9fa',
-    },
-    monthlyStatsGrid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 6,
-        marginBottom: 20,
-        justifyContent: 'space-between',
-    },
-    dayCard: {
-        width: (width - 60) / 7, // 7 cards per row with proper spacing
-        aspectRatio: 1,
-        backgroundColor: '#f8f9fa',
-        borderRadius: 8,
-        padding: 4,
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderWidth: 1,
-        borderColor: '#e9ecef',
-        marginBottom: 6,
-    },
-    todayCard: {
-        backgroundColor: '#E3F2FD',
-        borderColor: '#2196F3',
-    },
-    completedCard: {
-        backgroundColor: '#E8F5E8',
-        borderColor: '#4CAF50',
-    },
-    dayNumber: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: '#666',
-    },
-    todayText: {
-        color: '#2196F3',
-    },
-    completedText: {
-        color: '#4CAF50',
-    },
-    dayProgress: {
-        width: '100%',
-        height: 4,
-        backgroundColor: '#e0e0e0',
-        borderRadius: 2,
-        overflow: 'hidden',
-    },
-    dayProgressFill: {
-        height: '100%',
-        backgroundColor: '#0288D1',
-    },
-    completedProgress: {
-        backgroundColor: '#4CAF50',
-    },
-    dayIntake: {
-        fontSize: 10,
-        color: '#666',
-        fontWeight: '500',
-    },
-    monthlyStats: {
-        marginTop: 10,
-    },
-    statsTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#333',
-        marginBottom: 15,
-        textAlign: 'center',
-    },
-    statsSummary: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        gap: 10,
-    },
-    summaryCard: {
-        flex: 1,
-        backgroundColor: '#f8f9fa',
-        borderRadius: 12,
-        padding: 15,
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#e9ecef',
-    },
-    summaryNumber: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#0288D1',
-        marginBottom: 5,
-    },
-    summaryLabel: {
-        fontSize: 12,
-        color: '#666',
-        textAlign: 'center',
     },
     waterGradient: {
         flex: 1,

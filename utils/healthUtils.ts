@@ -2,6 +2,7 @@ import {
     requestPermission,
     getGrantedPermissions,
     DeviceType,
+    openHealthConnectSettings,
 } from 'react-native-health-connect';
 import * as Device from 'expo-device';
 
@@ -150,6 +151,54 @@ export const checkPermissionStatus = async (): Promise<any[]> => {
         return granted;
     } catch (error) {
         console.error('Error checking permissions:', error);
+        throw error;
+    }
+};
+
+export const openHealthConnectSettingsScreen = async (): Promise<void> => {
+    try {
+        await openHealthConnectSettings();
+        console.log('Health Connect settings opened successfully');
+    } catch (error) {
+        console.error('Error opening Health Connect settings:', error);
+        throw error;
+    }
+};
+
+export const requestEssentialPermissionsWithSettings = async (): Promise<any[]> => {
+    try {
+        let granted = await requestPermission(ESSENTIAL_PERMISSIONS as any);
+        if (!granted || granted.length === 0) {
+            console.log('No permissions granted directly, opening Health Connect settings...');
+            await openHealthConnectSettingsScreen();
+            
+            // After user returns from settings, check what permissions were granted
+            granted = await getGrantedPermissions();
+        }
+        
+        console.log('Essential permissions result:', granted);
+        return granted;
+    } catch (error) {
+        console.error('Error requesting essential permissions:', error);
+        throw error;
+    }
+};
+
+export const requestAllPermissionsWithSettings = async (): Promise<any[]> => {
+    try {
+        let granted = await requestPermission(ALL_HEALTH_PERMISSIONS as any);
+        if (!granted || granted.length === 0) {
+            console.log('No permissions granted directly, opening Health Connect settings...');
+            await openHealthConnectSettingsScreen();
+            
+            // After user returns from settings, check what permissions were granted
+            granted = await getGrantedPermissions();
+        }
+        
+        console.log('All permissions result:', granted);
+        return granted;
+    } catch (error) {
+        console.error('Error requesting all permissions:', error);
         throw error;
     }
 };

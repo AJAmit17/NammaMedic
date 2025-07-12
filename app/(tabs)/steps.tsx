@@ -20,20 +20,36 @@ import {
     initialize,
     readRecords,
     getSdkStatus,
-    SdkAvailabilityStatus,
-    aggregateGroupByPeriod,
-    aggregateGroupByDuration
+    SdkAvailabilityStatus
 } from 'react-native-health-connect';
 import {
-    requestEssentialPermissions,
+    requestEssentialPermissionsWithSettings,
     checkPermissionStatus,
+    openHealthConnectSettingsScreen,
 } from '@/utils/healthUtils';
-
 const { width } = Dimensions.get('window');
 
 interface StepCounterProps {
     steps: number;
     goal: number;
+}
+
+interface WeeklyStepData {
+    date: string;
+    dayName: string;
+    steps: number;
+    isToday: boolean;
+}
+
+interface DayDetailData {
+    date: string;
+    steps: number;
+    distance: number;
+    calories: number;
+    hourlyData: Array<{
+        hour: number;
+        steps: number;
+    }>;
 }
 
 function StepCounter({ steps, goal }: StepCounterProps) {
@@ -77,24 +93,6 @@ function StepCounter({ steps, goal }: StepCounterProps) {
     );
 }
 
-interface WeeklyStepData {
-    date: string;
-    dayName: string;
-    steps: number;
-    isToday: boolean;
-}
-
-interface DayDetailData {
-    date: string;
-    steps: number;
-    distance: number;
-    calories: number;
-    hourlyData: Array<{
-        hour: number;
-        steps: number;
-    }>;
-}
-
 export default function StepsScreen() {
     const [currentSteps, setCurrentSteps] = useState(0);
     const [stepGoal, setStepGoal] = useState(10000);
@@ -114,7 +112,7 @@ export default function StepsScreen() {
         try {
             setLoading(true);
 
-            await requestEssentialPermissions();
+            await requestEssentialPermissionsWithSettings();
             await new Promise(resolve => setTimeout(resolve, 1000));
 
             const newPermissions = await checkPermissionStatus();
@@ -127,6 +125,10 @@ export default function StepsScreen() {
                 Alert.alert(
                     'Permissions Required',
                     'Please grant Health Connect permissions to track your steps.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Open Settings', onPress: openHealthConnectSettingsScreen }
+                    ]
                 );
             }
         } catch (error) {
@@ -151,14 +153,11 @@ export default function StepsScreen() {
     const loadStepsData = async () => {
         setLoading(true);
         try {
-            // Get current local time and create proper date range for today
             const now = new Date();
-            const currentYear = now.getFullYear();
-            const currentMonth = now.getMonth();
-            const currentDate = now.getDate();
-
-            const today = new Date(currentYear, currentMonth, currentDate, 0, 0, 0, 0);
-            const endOfDay = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
+            const today = new Date(now);
+            today.setHours(0, 0, 0, 0);
+            const endOfDay = new Date(now);
+            endOfDay.setHours(23, 59, 59, 999);
 
             const stepsData = await readRecords('Steps', {
                 timeRangeFilter: {
@@ -188,56 +187,41 @@ export default function StepsScreen() {
 
     const loadWeeklyStepsData = async () => {
         try {
-            // Get current local time and create proper date range
-            const now = new Date();
-            const currentYear = now.getFullYear();
-            const currentMonth = now.getMonth();
-            const currentDate = now.getDate();
-            // const today = new Date(currentYear, currentMonth, currentDate);
-
-            const endDate = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
-            const startDate = new Date(currentYear, currentMonth, currentDate - 6, 0, 0, 0, 0);
-
-            // Use aggregateGroupByPeriod to get daily step counts
-            const weeklyData = await aggregateGroupByPeriod({
-                recordType: 'Steps',
+            // Use the same approach as health-dashboard.tsx
+            const stepsData = await readRecords('Steps', {
                 timeRangeFilter: {
                     operator: 'between',
-                    startTime: startDate.toISOString(),
-                    endTime: endDate.toISOString(),
-                },
-                timeRangeSlicer: {
-                    period: 'DAYS',
-                    length: 1,
+                    startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                    endTime: new Date().toISOString(),
                 },
             });
 
             const weeklyStepsArray: WeeklyStepData[] = [];
+            const today = new Date();
 
             for (let i = 6; i >= 0; i--) {
-                // Create date in local timezone
-                const date = new Date(currentYear, currentMonth, currentDate - i);
+                const date = new Date(today);
+                date.setDate(date.getDate() - i);
                 const dayName = getDayName(date);
                 const isToday = i === 0;
                 const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-                let steps = 0;
-                if (weeklyData && Array.isArray(weeklyData)) {
-                    const matchingData = weeklyData.find((item: any) => {
-                        // Get the date part of the startTime in YYYY-MM-DD format
-                        const itemDateString = item.startTime.split('T')[0];
-                        return itemDateString === dateString;
-                    });
+                const dayStart = new Date(date);
+                dayStart.setHours(0, 0, 0, 0);
+                const dayEnd = new Date(date);
+                dayEnd.setHours(23, 59, 59, 999);
 
-                    if (matchingData && matchingData.result && matchingData.result.COUNT_TOTAL !== undefined) {
-                        steps = matchingData.result.COUNT_TOTAL;
-                    }
-                }
+                const daySteps = stepsData.records
+                    .filter((record: any) => {
+                        const recordTime = new Date(record.startTime || record.time);
+                        return recordTime >= dayStart && recordTime <= dayEnd;
+                    })
+                    .reduce((sum: number, record: any) => sum + record.count, 0);
 
                 weeklyStepsArray.push({
                     date: dateString,
                     dayName,
-                    steps,
+                    steps: daySteps,
                     isToday,
                 });
             }
@@ -247,15 +231,12 @@ export default function StepsScreen() {
             console.error('Error loading weekly steps data:', error);
             // Fallback: create empty data for the past 7 days using same date logic
             const fallbackData: WeeklyStepData[] = [];
-
-            const now = new Date();
-            const currentYear = now.getFullYear();
-            const currentMonth = now.getMonth();
-            const currentDate = now.getDate();
+            const today = new Date();
 
             for (let i = 6; i >= 0; i--) {
-                const date = new Date(currentYear, currentMonth, currentDate - i);
-                const isToday = i === 0; // i === 0 means today
+                const date = new Date(today);
+                date.setDate(date.getDate() - i);
+                const isToday = i === 0;
                 const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
                 fallbackData.push({
@@ -330,46 +311,36 @@ export default function StepsScreen() {
             const endOfDay = new Date(date);
             endOfDay.setHours(23, 59, 59, 999);
 
-            // Get hourly step data using aggregateGroupByDuration
-            const hourlyData = await aggregateGroupByDuration({
-                recordType: 'Steps',
+            const dayStepsData = await readRecords('Steps', {
                 timeRangeFilter: {
                     operator: 'between',
                     startTime: startOfDay.toISOString(),
                     endTime: endOfDay.toISOString(),
                 },
-                timeRangeSlicer: {
-                    duration: 'HOURS',
-                    length: 1,
-                },
             });
 
-            // Process hourly data
+            // Process hourly data by manually filtering records
             const hourlySteps: Array<{ hour: number; steps: number }> = [];
             let totalSteps = 0;
 
             for (let hour = 0; hour < 24; hour++) {
-                let hourSteps = 0;
+                const hourStart = new Date(date);
+                hourStart.setHours(hour, 0, 0, 0);
+                const hourEnd = new Date(date);
+                hourEnd.setHours(hour, 59, 59, 999);
 
-                if (hourlyData && Array.isArray(hourlyData)) {
-                    const targetDateString = selectedDate; // Already in YYYY-MM-DD format
+                // Filter records that fall within this hour
+                const hourStepsCount = dayStepsData.records
+                    .filter((record: any) => {
+                        const recordTime = new Date(record.startTime || record.time);
+                        return recordTime >= hourStart && recordTime <= hourEnd;
+                    })
+                    .reduce((sum: number, record: any) => sum + (record.count || 0), 0);
 
-                    const hourData = hourlyData.find((item: any) => {
-                        const itemDate = new Date(item.startTime);
-                        const itemDateString = item.startTime.split('T')[0]; // YYYY-MM-DD format
-                        return itemDate.getHours() === hour && itemDateString === targetDateString;
-                    });
-
-                    if (hourData && hourData.result && hourData.result.COUNT_TOTAL !== undefined) {
-                        hourSteps = hourData.result.COUNT_TOTAL;
-                    }
-                }
-
-                hourlySteps.push({ hour, steps: hourSteps });
-                totalSteps += hourSteps;
+                hourlySteps.push({ hour, steps: hourStepsCount });
+                totalSteps += hourStepsCount;
             }
 
-            // Calculate derived metrics
             const distance = (totalSteps * 0.0008); // km
             const calories = Math.round((totalSteps / 1000) * 20);
 
@@ -491,7 +462,7 @@ export default function StepsScreen() {
 
     const totalSteps = currentSteps;
     const progressPercentage = Math.min((totalSteps / stepGoal) * 100, 100);
-    const remainingSteps = Math.max(stepGoal - totalSteps, 0);
+    // const remainingSteps = Math.max(stepGoal - totalSteps, 0);
 
     const distanceKm = (totalSteps * 0.0008).toFixed(1);
 
@@ -533,16 +504,13 @@ export default function StepsScreen() {
         <LinearGradient colors={["#0288D1", "#0277BD", "#01579B"]} style={styles.header}>
             <View style={styles.headerContent}>
                 <View style={styles.headerTop}>
+                    <View style={{ width: 40 }} />
                     <Text style={styles.greeting}>Daily Steps</Text>
-                    {(loading || refreshing) && (
-                        <View style={styles.loadingIndicator}>
-                            <Text style={styles.loadingText}>•••</Text>
-                        </View>
-                    )}
-                    <TouchableOpacity style={styles.goalDisplay} onPress={openGoalModal}>
-                        <Text style={styles.goalText}>Goal: {stepGoal.toLocaleString()}</Text>
-                        <Ionicons name="create-outline" size={12} color="rgba(255, 255, 255, 0.8)" style={{ marginLeft: 4 }} />
-                    </TouchableOpacity>
+                    <View style={styles.headerButtons}>
+                        <TouchableOpacity style={styles.infoButton} onPress={openGoalModal} activeOpacity={0.7}>
+                            <Ionicons name="create-outline" size={24} color="white" />
+                        </TouchableOpacity>
+                    </View>
                 </View>
                 <StepCounter steps={totalSteps} goal={stepGoal} />
                 <Text style={styles.motivationalText}>{getMotivationalMessage()}</Text>
@@ -625,54 +593,86 @@ export default function StepsScreen() {
                 </View>
             </View>
 
-            {/* Weekly Progress Section */}
             <View style={styles.statsContainer}>
-                <View style={styles.sectionHeaderWithHint}>
+                <View>
                     <Text style={styles.sectionTitle}>Weekly Progress</Text>
-                    {/* <Text style={styles.sectionHint}>Tap any day for detailed view</Text> */}
                 </View>
                 <View style={styles.weeklyProgressCard}>
-                    <View style={styles.weeklyChart}>
-                        {weeklyStepsData.map((dayData, index) => {
-                            const progressPercent = Math.min((dayData.steps / stepGoal) * 100, 100);
-                            const maxHeight = 120;
-                            const barHeight = Math.max((progressPercent / 100) * maxHeight, 4);
+                    <View style={styles.chartContainer}>
+                        {weeklyStepsData.length > 0 && (
+                            <View style={styles.weeklyChart}>
+                                {weeklyStepsData.map((day, index) => {
+                                    // Use the user's goal as the reference for scaling
+                                    const maxReference = stepGoal;
+                                    const maxBarHeight = 120;
+                                    const barHeight = day.steps > 0 ? Math.min((day.steps / maxReference) * maxBarHeight, maxBarHeight) : 4;
+                                    const isToday = day.isToday;
+                                    const hasReachedGoal = day.steps >= stepGoal;
 
-                            return (
-                                <TouchableOpacity
-                                    key={dayData.date}
-                                    style={styles.chartBar}
-                                    onPress={() => loadDayDetailData(dayData.date)}
-                                    disabled={loadingDayDetail}
-                                >
-                                    <View style={[styles.barContainer, { height: maxHeight }]}>
-                                        <View
-                                            style={[
-                                                styles.bar,
-                                                {
-                                                    height: barHeight,
-                                                    backgroundColor: dayData.isToday ? '#0288D1' : progressPercent >= 100 ? '#52C41A' : '#9E9E9E'
-                                                }
-                                            ]}
-                                        />
-                                    </View>
-                                    <Text style={[styles.dayLabel, dayData.isToday && styles.todayLabel]}>
-                                        {dayData.isToday ? 'TODAY' : dayData.dayName}
-                                    </Text>
-                                    <Text style={styles.dateLabel}>
-                                        {formatDate(dayData.date)}
-                                    </Text>
-                                    <Text style={[styles.stepsCountLabel, dayData.isToday && styles.todayStepsLabel]}>
-                                        {dayData.steps > 999 ? `${(dayData.steps / 1000).toFixed(1)}k` : dayData.steps.toString()}
-                                    </Text>
-                                    {dayData.isToday && (
-                                        <View style={styles.todayBadge}>
-                                            <Text style={styles.todayBadgeText}>•</Text>
-                                        </View>
-                                    )}
-                                </TouchableOpacity>
-                            );
-                        })}
+                                    // Determine bar color based on goal achievement and today status
+                                    let barColor = '#E0E0E0'; // Default gray for no steps
+                                    if (day.steps > 0) {
+                                        if (hasReachedGoal) {
+                                            barColor = '#52C41A'; // Green for goal reached
+                                        } else if (isToday) {
+                                            barColor = '#0288D1'; // Blue for today
+                                        } else {
+                                            barColor = '#87CEEB'; // Light blue for regular days
+                                        }
+                                    }
+
+                                    return (
+                                        <TouchableOpacity
+                                            key={day.date}
+                                            style={styles.chartBar}
+                                            onPress={() => loadDayDetailData(day.date)}
+                                            activeOpacity={0.7}
+                                        >
+                                            <View style={styles.barContainer}>
+                                                {day.steps > 0 && (
+                                                    <Text style={[
+                                                        styles.stepsCountLabel, 
+                                                        isToday && styles.todayStepsLabel,
+                                                        hasReachedGoal && styles.goalReachedStepsLabel
+                                                    ]}>
+                                                        {day.steps > 999 ? `${(day.steps / 1000).toFixed(1)}k` : day.steps}
+                                                    </Text>
+                                                )}
+                                                <View
+                                                    style={[
+                                                        styles.bar,
+                                                        {
+                                                            height: Math.max(barHeight, 4),
+                                                            backgroundColor: barColor
+                                                        }
+                                                    ]}
+                                                />
+                                            </View>
+                                            <Text style={[
+                                                styles.dayLabel, 
+                                                isToday && styles.todayLabel,
+                                                hasReachedGoal && styles.goalReachedLabel
+                                            ]}>
+                                                {isToday ? 'TODAY' : day.dayName}
+                                            </Text>
+                                            <Text style={[
+                                                styles.dateLabel,
+                                                isToday && styles.todayDateLabel
+                                            ]}>
+                                                {formatDate(day.date)}
+                                            </Text>
+                                            <Text style={[
+                                                styles.totalStepsLabel,
+                                                isToday && styles.todayTotalStepsLabel,
+                                                hasReachedGoal && styles.goalReachedTotalStepsLabel
+                                            ]}>
+                                                {day.steps.toLocaleString()}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+                        )}
                     </View>
 
                     <View style={styles.weeklyStats}>
@@ -705,16 +705,6 @@ export default function StepsScreen() {
                     <Text style={styles.tipText}>• Park farther away from entrances</Text>
                     <Text style={styles.tipText}>• Take walking breaks every hour</Text>
                     <Text style={styles.tipText}>• Walk while talking on the phone</Text>
-                </View>
-
-                <View style={styles.infoCard}>
-                    <Ionicons name="information-circle-outline" size={20} color="#1976D2" />
-                    <View style={styles.infoContent}>
-                        <Text style={styles.infoTitle}>Custom Step Goal</Text>
-                        <Text style={styles.infoText}>
-                            Tap on your goal at the top to customize it. Your goal is stored locally and helps track your daily progress.
-                        </Text>
-                    </View>
                 </View>
             </View>
 
@@ -964,52 +954,41 @@ const styles = StyleSheet.create({
         textAlign: "center",
     },
     header: {
-        paddingTop: 50,
-        paddingBottom: 15,
+        paddingTop: 40, // Significantly reduced to move title closer to notch
+        paddingBottom: 15, // Reduced from 25 to decrease gap
         borderBottomLeftRadius: 30,
         borderBottomRightRadius: 30,
+        position: "relative",
     },
     headerContent: {
         alignItems: "center",
-        paddingHorizontal: 20,
+        paddingHorizontal: 0,
+        paddingTop: 5, // Reduced from 20 to move title closer to top
     },
     headerTop: {
         flexDirection: "row",
-        justifyContent: "center",
+        justifyContent: "space-between",
         alignItems: "center",
         width: "100%",
-        marginBottom: 5,
+        paddingHorizontal: 20,
         position: "relative",
     },
-    goalButton: {
+    infoButton: {
         width: 40,
         height: 40,
         borderRadius: 20,
         backgroundColor: "rgba(255, 255, 255, 0.2)",
         justifyContent: "center",
         alignItems: "center",
-        position: "absolute",
-        right: 0,
-        zIndex: 1,
     },
-    goalDisplay: {
-        position: "absolute",
-        right: 0,
-        backgroundColor: "rgba(255, 255, 255, 0.2)",
-        borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        flexDirection: "row",
-        alignItems: "center",
-        borderWidth: 1,
-        borderColor: "rgba(255, 255, 255, 0.3)",
+    headerButtons: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     loadingIndicator: {
-        position: "absolute",
-        right: 120,
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
         backgroundColor: "rgba(255, 255, 255, 0.2)",
         justifyContent: "center",
         alignItems: "center",
@@ -1024,21 +1003,24 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         color: "white",
         textAlign: "center",
+        flex: 1,
     },
     motivationalText: {
         fontSize: 16,
         color: "rgba(255, 255, 255, 0.9)",
-        marginTop: 10,
+        marginVertical: 0,
+        marginTop: 15,
         textAlign: "center",
     },
     content: {
         flex: 1,
+        marginVertical: 0,
         paddingTop: 20,
     },
     progressContainer: {
         alignItems: "center",
         justifyContent: "center",
-        marginTop: 30,
+        marginTop: 10,
         marginVertical: 0,
     },
     progressTextContainer: {
@@ -1365,65 +1347,118 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         elevation: 3,
     },
+    chartContainer: {
+        backgroundColor: "transparent",
+        borderRadius: 0,
+        marginBottom: 15,
+        marginTop: 15,
+        paddingVertical: 0,
+        shadowColor: "transparent",
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0,
+        shadowRadius: 0,
+        elevation: 0,
+    },
+    chartTitle: {
+        fontSize: 16,
+        fontWeight: "600",
+        color: "#333",
+        marginBottom: 15,
+        marginLeft: 0,
+        textAlign: "left",
+    },
     weeklyChart: {
         flexDirection: "row",
         justifyContent: "space-between",
         alignItems: "flex-end",
-        marginBottom: 20,
-        paddingHorizontal: 10,
+        paddingHorizontal: 15,
+        height: 180,
     },
     chartBar: {
         alignItems: "center",
         flex: 1,
-        marginHorizontal: 2,
+        marginHorizontal: 3,
     },
     barContainer: {
         justifyContent: "flex-end",
         alignItems: "center",
-        marginBottom: 8,
+        marginBottom: 10,
+        height: 100,
     },
     bar: {
-        width: 24,
-        borderRadius: 12,
+        width: 20,
+        borderRadius: 10,
         minHeight: 4,
     },
     dayLabel: {
-        fontSize: 12,
+        fontSize: 11,
         fontWeight: "600",
         color: "#666",
         marginTop: 4,
+        textAlign: "center",
     },
     todayLabel: {
         color: "#0288D1",
         fontWeight: "700",
     },
     dateLabel: {
-        fontSize: 10,
+        fontSize: 9,
         color: "#999",
         marginTop: 2,
+        textAlign: "center",
     },
     stepsCountLabel: {
         fontSize: 10,
         color: "#999",
-        marginTop: 2,
+        marginBottom: 4,
         fontWeight: "500",
+        textAlign: "center",
     },
     todayStepsLabel: {
         color: "#0288D1",
         fontWeight: "600",
     },
+    goalReachedStepsLabel: {
+        color: "#52C41A",
+        fontWeight: "700",
+    },
+    goalReachedLabel: {
+        color: "#52C41A",
+        fontWeight: "700",
+    },
+    todayDateLabel: {
+        color: "#0288D1",
+        fontWeight: "600",
+    },
+    totalStepsLabel: {
+        fontSize: 9,
+        color: "#666",
+        marginTop: 2,
+        textAlign: "center",
+        fontWeight: "500",
+    },
+    todayTotalStepsLabel: {
+        color: "#0288D1",
+        fontWeight: "600",
+    },
+    goalReachedTotalStepsLabel: {
+        color: "#52C41A",
+        fontWeight: "600",
+    },
     weeklyStats: {
         flexDirection: "row",
         justifyContent: "space-around",
-        paddingTop: 15,
+        paddingTop: 10,
         borderTopWidth: 1,
         borderTopColor: "#f0f0f0",
+        marginTop: 10,
     },
     weeklyStatItem: {
         alignItems: "center",
+        flex: 1,
     },
     weeklyStatValue: {
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: "bold",
         color: "#333",
     },
@@ -1474,10 +1509,6 @@ const styles = StyleSheet.create({
     presetButtonTextSelected: {
         color: "white",
         fontWeight: "600",
-    },
-    // Section Header Styles
-    sectionHeaderWithHint: {
-        marginBottom: 15,
     },
     sectionHint: {
         fontSize: 12,

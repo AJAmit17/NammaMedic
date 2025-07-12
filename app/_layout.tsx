@@ -1,9 +1,9 @@
 import { Stack, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { View, Alert } from "react-native";
+import { View, Alert, AppState } from "react-native";
 import { Appbar, PaperProvider, MD3LightTheme } from "react-native-paper";
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import * as Updates from 'expo-updates';
@@ -228,6 +228,14 @@ export default function Layout() {
           options={{
             headerShown: true,
             title: "History",
+            headerBackVisible: true,
+          }}
+        />
+        <Stack.Screen
+          name="test"
+          options={{
+            headerShown: true,
+            title: "Widget Test",
             headerBackVisible: true,
           }}
         />

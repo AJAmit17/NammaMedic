@@ -1,5 +1,3 @@
-"use client"
-
 import React, { useState, useEffect } from "react"
 import {
     View,
@@ -16,25 +14,22 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context"
 import {
     initialize,
-    requestPermission,
-    getGrantedPermissions,
     readRecords,
     insertRecords,
     getSdkStatus,
     SdkAvailabilityStatus,
-    RecordingMethod,
-    DeviceType,
+    RecordingMethod
 } from "react-native-health-connect"
 import { LineChart } from "react-native-chart-kit"
 import { 
     getDateRange, 
     formatHealthValue, 
-    requestEssentialPermissions,
-    requestAllPermissions,
+    requestEssentialPermissionsWithSettings,
+    requestAllPermissionsWithSettings,
     checkPermissionStatus,
-    getDeviceMetadata 
-} from "../../utils/healthUtils"
-import * as Device from "expo-device"
+    getDeviceMetadata,
+    openHealthConnectSettingsScreen
+} from "@/utils/healthUtils"
 
 const screenWidth = Dimensions.get("window").width
 
@@ -220,7 +215,7 @@ const HealthDashboard: React.FC = () => {
 
     const requestHealthPermissions = async () => {
         try {
-            const permissions = await requestEssentialPermissions()
+            const permissions = await requestEssentialPermissionsWithSettings()
             const newGranted = await checkPermissionStatus()
             setPermissions(newGranted)
 
@@ -230,7 +225,7 @@ const HealthDashboard: React.FC = () => {
                     "Health Connect permissions are required to display your health data. Please grant permissions in the Health Connect settings.",
                     [
                         { text: "Cancel", style: "cancel" },
-                        { text: "Open Settings", onPress: () => initializeHealthConnect() },
+                        { text: "Open Settings", onPress: openHealthConnectSettingsScreen },
                     ],
                 )
             }
@@ -241,7 +236,7 @@ const HealthDashboard: React.FC = () => {
 
     const requestAllHealthPermissions = async () => {
         try {
-            const permissions = await requestAllPermissions()
+            const permissions = await requestAllPermissionsWithSettings()
             const newGranted = await checkPermissionStatus()
             setPermissions(newGranted)
 
@@ -251,7 +246,7 @@ const HealthDashboard: React.FC = () => {
                     "Health Connect permissions are required to display your health data. Please grant permissions in the Health Connect settings.",
                     [
                         { text: "Cancel", style: "cancel" },
-                        { text: "Open Settings", onPress: () => initializeHealthConnect() },
+                        { text: "Open Settings", onPress: openHealthConnectSettingsScreen },
                     ],
                 )
             }
