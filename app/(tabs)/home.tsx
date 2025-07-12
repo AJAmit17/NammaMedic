@@ -27,13 +27,11 @@ import { useFocusEffect } from "@react-navigation/native";
 import {
   requestNotificationPermissions,
   scheduleMedicationReminder,
-  cancelAllNotifications,
 } from "@/utils/notifications";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get("window");
 
-// User profile interface for emergency contacts
 interface UserProfile {
   emergencyContact: {
     name: string;
@@ -148,7 +146,6 @@ function CircularProgress({
 }
 
 export default function HomeScreen() {
-  // const router = useRouter();
   const [showNotifications, setShowNotifications] = useState(false);
   const [medications, setMedications] = useState<Medication[]>([]);
   const [todaysMedications, setTodaysMedications] = useState<Medication[]>([]);
@@ -236,7 +233,7 @@ export default function HomeScreen() {
       return;
     }
 
-    const phoneNumber = contact.phone.replace(/[^\d+]/g, ''); // Remove non-numeric characters except +
+    const phoneNumber = contact.phone.replace(/[^\d+]/g, '');
 
     Alert.alert(
       `Call ${contact.name || (contactType === 'emergency' ? 'Emergency Contact' : 'Doctor')}`,
@@ -265,7 +262,6 @@ export default function HomeScreen() {
         return;
       }
 
-      // Schedule reminders for all medications
       const medications = await getMedications();
       for (const medication of medications) {
         if (medication.reminderEnabled) {
@@ -277,13 +273,11 @@ export default function HomeScreen() {
     }
   };
 
-  // Use useEffect for initial load
   useEffect(() => {
     loadMedications();
     loadUserProfile();
     setupNotifications();
 
-    // Handle app state changes for notifications
     const subscription = AppState.addEventListener("change", (nextAppState) => {
       if (nextAppState === "active") {
         loadMedications();
@@ -296,7 +290,6 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Use useFocusEffect for subsequent updates
   useFocusEffect(
     useCallback(() => {
       const unsubscribe = () => {
@@ -304,7 +297,7 @@ export default function HomeScreen() {
       };
 
       loadMedications();
-      loadUserProfile(); // Add this to reload profile when tab becomes active
+      loadUserProfile();
       return () => unsubscribe();
     }, [loadMedications, loadUserProfile])
   );
@@ -316,7 +309,7 @@ export default function HomeScreen() {
       const scheduledTime = timeSlot || currentTime;
 
       await recordDose(medication.id, true, now.toISOString(), scheduledTime);
-      await loadMedications(); // Reload data after recording dose
+      await loadMedications(); 
     } catch (error) {
       console.error("Error recording dose:", error);
       Alert.alert("Error", "Failed to record dose. Please try again.");
@@ -342,9 +335,8 @@ export default function HomeScreen() {
     if (!medication.times || medication.times.length === 0) return null;
 
     const now = new Date();
-    const currentTime = now.getHours() * 60 + now.getMinutes(); // Current time in minutes
+    const currentTime = now.getHours() * 60 + now.getMinutes();
 
-    // Find the next scheduled time that hasn't been taken
     for (const time of medication.times) {
       const [hours, minutes] = time.split(':').map(Number);
       const timeInMinutes = hours * 60 + minutes;
@@ -356,14 +348,13 @@ export default function HomeScreen() {
       }
     }
 
-    // If no future time today, return the first untaken time (for next day or already passed)
     for (const time of medication.times) {
       if (!isDoseTaken(medication.id, time)) {
         return time;
       }
     }
 
-    return medication.times[0]; // Fallback to first time
+    return medication.times[0]; 
   };
 
   const getTotalDosesForToday = (medications: Medication[]) => {
@@ -431,7 +422,6 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Emergency SOS Section */}
         <View style={styles.emergencyContainer}>
           <Text style={styles.sectionTitle}>Emergency SOS</Text>
           <View style={styles.emergencyButtonsContainer}>
@@ -481,34 +471,10 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* <View>
-          <TouchableOpacity 
-            onPress={async () => {
-              await cancelAllNotifications();
-              Alert.alert("Success", "All notifications have been cancelled!");
-            }}
-            style={styles.emergencyStopButton}
-          >
-            <Text style={styles.emergencyStopText}>🛑 Stop All Notifications</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View>
-          <TouchableOpacity 
-            onPress={async () => {
-              await sendTestNotification();
-              Alert.alert("Success", "Test notification has been sent!");
-            }}<
-            style={styles.emergencyStopButton}
-          >
-            <Text style={styles.emergencyStopText}>🧪 Send Test Notification</Text>
-          </TouchableOpacity>
-        </View> */}
-
         <View>
           <TouchableOpacity>
             <Link href="/test" asChild>
-              <Text style={styles.addMedicationButton}>➕ Add New Medication</Text>
+              <Text style={styles.addMedicationButton}>Widget TEST Screen</Text>
             </Link>
           </TouchableOpacity>
         </View>
