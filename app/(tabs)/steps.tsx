@@ -34,7 +34,7 @@ interface StepCounterProps {
     goal: number;
 }
 
-interface WeeklyStepData {
+export interface WeeklyStepData {
     date: string;
     dayName: string;
     steps: number;

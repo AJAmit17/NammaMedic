@@ -11,16 +11,26 @@ import {
     TextInput,
     Share,
     Linking,
-    Platform,
+    Clipboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
-
+import QRCode from 'react-native-qrcode-svg';
+import { WeeklyStepData } from './steps';
+import { useCallback } from 'react';
+import {
+    initialize,
+    getSdkStatus,
+    readRecords
+} from 'react-native-health-connect';
 const { width } = Dimensions.get('window');
 
-// Gender options
+
+import CryptoJS from 'crypto-js';
+const WEBHOOK_SECRET = 'nammamedic';
+
 const GENDER_OPTIONS = [
     'Male',
     'Female',
@@ -29,7 +39,6 @@ const GENDER_OPTIONS = [
     'Other'
 ];
 
-// Blood type options
 const BLOOD_TYPE_OPTIONS = [
     'A+',
     'A-',
@@ -42,7 +51,6 @@ const BLOOD_TYPE_OPTIONS = [
     'Unknown'
 ];
 
-// Common medical conditions
 const COMMON_CONDITIONS = [
     'Diabetes Type 1',
     'Diabetes Type 2',
@@ -147,9 +155,135 @@ export default function ProfileScreen() {
     const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
     const [selectedAllergies, setSelectedAllergies] = useState<string[]>([]);
 
+    // Shareable account states
+    const [userShareId, setUserShareId] = useState<string>('');
+    const [shareableLink, setShareableLink] = useState<string>('');
+    const [isAccountRegistered, setIsAccountRegistered] = useState(false);
+    const [accessExpiry, setAccessExpiry] = useState<number | null>(null);
+
+    const [weeklySteps, setWeeklySteps] = useState<WeeklyStepData[]>([]);
+    const [weeklyHydration, setWeeklyHydration] = useState<{
+        date: string;
+        dayName: string;
+        intake: number;
+        isToday: boolean;
+    }[]>([]);
+
+
+
     useEffect(() => {
         loadProfile();
+        initializeAndFetchWeeklyData();
     }, []);
+
+    const initializeAndFetchWeeklyData = useCallback(async () => {
+        try {
+            const status = await getSdkStatus();
+            if (status !== 0) return;
+            const initialized = await initialize();
+            if (!initialized) return;
+            await fetchWeeklySteps();
+            await fetchWeeklyHydration();
+        } catch (error) {
+            console.error('Error initializing Health Connect:', error);
+        }
+    }, []);
+
+    const fetchWeeklySteps = useCallback(async () => {
+        try {
+            const stepsData = await readRecords('Steps', {
+                timeRangeFilter: {
+                    operator: 'between',
+                    startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                    endTime: new Date().toISOString(),
+                },
+            });
+            const weeklyStepsArray: WeeklyStepData[] = [];
+            const today = new Date();
+            for (let i = 6; i >= 0; i--) {
+                const date = new Date(today);
+                date.setDate(date.getDate() - i);
+                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+                const isToday = i === 0;
+                const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+                const dayStart = new Date(date);
+                dayStart.setHours(0, 0, 0, 0);
+                const dayEnd = new Date(date);
+                dayEnd.setHours(23, 59, 59, 999);
+                const daySteps = stepsData.records
+                    .filter((record) => {
+                        const recordTime = new Date(record.startTime);
+                        return recordTime >= dayStart && recordTime <= dayEnd;
+                    })
+                    .reduce((sum, record) => sum + (record.count || 0), 0);
+                weeklyStepsArray.push({
+                    date: dateString,
+                    dayName,
+                    steps: daySteps,
+                    isToday,
+                });
+            }
+            setWeeklySteps(weeklyStepsArray);
+        } catch (error) {
+            console.error('Error fetching weekly steps:', error);
+        }
+    }, []);
+
+    const fetchWeeklyHydration = useCallback(async () => {
+        try {
+            const hydrationData = await readRecords('Hydration', {
+                timeRangeFilter: {
+                    operator: 'between',
+                    startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                    endTime: new Date().toISOString(),
+                },
+            });
+            const weeklyHydrationArray: {
+                date: string;
+                dayName: string;
+                intake: number;
+                isToday: boolean;
+            }[] = [];
+            const today = new Date();
+            for (let i = 6; i >= 0; i--) {
+                const date = new Date(today);
+                date.setDate(date.getDate() - i);
+                const dateString = date.toISOString().split('T')[0];
+                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+                const isToday = i === 0;
+                const dayStart = new Date(date);
+                dayStart.setHours(0, 0, 0, 0);
+                const dayEnd = new Date(date);
+                dayEnd.setHours(23, 59, 59, 999);
+                const dayHydration = hydrationData.records
+                    .filter((record) => {
+                        const recordDate = new Date(record.startTime);
+                        return recordDate >= dayStart && recordDate <= dayEnd;
+                    })
+                    .reduce((sum, record) => sum + (record.volume?.inLiters || 0), 0);
+                weeklyHydrationArray.push({
+                    date: dateString,
+                    dayName,
+                    intake: Math.round(dayHydration * 1000),
+                    isToday,
+                });
+            }
+            setWeeklyHydration(weeklyHydrationArray);
+        } catch (error) {
+            console.error('Error fetching weekly hydration:', error);
+        }
+    }, []);
+
+    // Check for expired access every minute
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (accessExpiry && Date.now() > accessExpiry && isAccountRegistered) {
+                revokeShareableAccessSilent();
+            }
+        }, 60000); // Check every minute
+
+        return () => clearInterval(interval);
+    }, [accessExpiry, isAccountRegistered]);
 
     const loadProfile = async () => {
         try {
@@ -172,11 +306,278 @@ export default function ProfileScreen() {
         }
     };
 
+    const generateUniqueId = () => {
+        const timestamp = Date.now().toString(36);
+        const randomPart = Math.random().toString(36).substr(2, 9);
+        return `${timestamp}-${randomPart}`;
+    };
+
+    function signPayload(rawBody: string) {
+        return CryptoJS.HmacSHA256(rawBody, WEBHOOK_SECRET).toString(CryptoJS.enc.Hex);
+    }
+
+    const sendProfileToServer = async (shareId: string, expiry: number) => {
+        try {
+            const data = {
+                ...profile,
+                weeklySteps,
+                weeklyHydration,
+                expiry,
+            };
+
+            const payload = {
+                shareId,
+                source: 'mobile-app',
+                data,
+            };
+
+            const rawBody = JSON.stringify(payload);
+            const signature = signPayload(rawBody);
+
+            const finalPayload = {
+                ...payload,
+                signature,
+            };
+
+            console.log('Sending profile to server:', finalPayload);
+
+            const res = await fetch('https://namma-medic.vercel.app/api/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(finalPayload),
+            });
+
+            const text = await res.text();
+            console.log('Response:', res.status, text);
+
+        } catch (error) {
+            console.error('Error sending profile to server:', error);
+        }
+    };
+
+    const generateNewAccess = async () => {
+        const newShareId = generateUniqueId();
+        const expiryTime = Date.now() + (5 * 60 * 1000);
+        const newShareableLink = `https://namma-medic.vercel.app/api/patient/${newShareId}`;
+
+        await AsyncStorage.setItem('userShareId', newShareId);
+        await AsyncStorage.setItem('accessExpiry', expiryTime.toString());
+        await AsyncStorage.setItem('shareableLink', newShareableLink);
+
+        // Update state
+        setUserShareId(newShareId);
+        setShareableLink(newShareableLink);
+        setAccessExpiry(expiryTime);
+
+        // Send profile to server
+        await sendProfileToServer(newShareId, expiryTime);
+
+        return { shareId: newShareId, link: newShareableLink, expiry: expiryTime };
+    };
+
+    const revokeShareableAccessSilent = async () => {
+        try {
+            await AsyncStorage.removeItem('userShareId');
+            await AsyncStorage.removeItem('accessExpiry');
+            await AsyncStorage.removeItem('shareableLink');
+
+            setUserShareId('');
+            setShareableLink('');
+            setAccessExpiry(null);
+            setIsAccountRegistered(false);
+        } catch (error) {
+            console.error('Error revoking access silently:', error);
+        }
+    };
+
+    const registerShareableAccount = async () => {
+        try {
+            // Verify authentication first
+            const authResult = await verifyAuthentication();
+            if (!authResult) {
+                Alert.alert('Authentication Required', 'Please authenticate to register for shareable access.');
+                return;
+            }
+
+            // Generate new access with 5-minute expiry
+            const accessData = await generateNewAccess();
+
+            // Save registration status
+            await AsyncStorage.setItem('isAccountRegistered', 'true');
+            setIsAccountRegistered(true);
+
+            const expiryDate = new Date(accessData.expiry).toLocaleTimeString();
+
+            Alert.alert(
+                'Registration Successful!',
+                `Your shareable medical profile has been created. Access will expire at ${expiryDate} (5 minutes). Doctors can scan the QR code or use the link to access your medical history.`,
+                [{ text: 'OK' }]
+            );
+
+        } catch (error) {
+            console.error('Error registering shareable account:', error);
+            Alert.alert('Error', 'Failed to register shareable account. Please try again.');
+        }
+    };
+
+    const verifyAuthentication = async () => {
+        try {
+            const LocalAuthentication = require('expo-local-authentication');
+
+            const hasHardware = await LocalAuthentication.hasHardwareAsync();
+            const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+            if (hasHardware && isEnrolled) {
+                const authResult = await LocalAuthentication.authenticateAsync({
+                    promptMessage: 'Authenticate to register shareable account',
+                    fallbackLabel: 'Use PIN',
+                    cancelLabel: 'Cancel',
+                    disableDeviceFallback: false,
+                });
+
+                return authResult.success;
+            } else {
+                // If no biometric authentication available, show a simple confirmation
+                return new Promise((resolve) => {
+                    Alert.alert(
+                        'Confirm Registration',
+                        'Do you want to register for shareable medical access?',
+                        [
+                            { text: 'Cancel', onPress: () => resolve(false) },
+                            { text: 'Confirm', onPress: () => resolve(true) }
+                        ]
+                    );
+                });
+            }
+        } catch (error) {
+            console.error('Authentication error:', error);
+            return false;
+        }
+    };
+
+    const shareQRCode = async () => {
+        try {
+            if (!shareableLink) {
+                Alert.alert('Error', 'No shareable link available to share.');
+                return;
+            }
+            // Log what is being shared
+            // console.log('Sharing link:', shareableLink);
+            // console.log('Profile data that will be accessible:', {
+            //     ...profile,
+            //     weeklySteps,
+            //     weeklyHydration,
+            // });
+            // Check if access has expired
+            if (accessExpiry && Date.now() > accessExpiry) {
+                Alert.alert(
+                    'Access Expired',
+                    'Your shareable access has expired. Generate new access?',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: 'Generate New Access',
+                            onPress: async () => {
+                                const accessData = await generateNewAccess();
+                                await sendProfileToServer(accessData.shareId, accessData.expiry);
+                                await shareQRCode(); // Retry sharing
+                            }
+                        }
+                    ]
+                );
+                return;
+            }
+
+            // Always update server before sharing
+            if (userShareId && accessExpiry) {
+                await sendProfileToServer(userShareId, accessExpiry);
+            }
+
+            const expiryTime = accessExpiry ? new Date(accessExpiry).toLocaleTimeString() : 'Unknown';
+            const shareData = {
+                title: 'My Medical Profile - Namma Medic',
+                message: `Access my medical profile securely: ${shareableLink}\n\nThis link provides secure access to my medical history for healthcare professionals.\nAccess expires at: ${expiryTime}`,
+                url: shareableLink,
+            };
+
+            await Share.share(shareData);
+        } catch (error) {
+            console.error('Error sharing QR code:', error);
+            Alert.alert('Error', 'Failed to share profile. Please try again.');
+        }
+    };
+
+    const extendAccess = async () => {
+        try {
+            // Verify authentication for extending access
+            const authResult = await verifyAuthentication();
+            if (!authResult) {
+                Alert.alert('Authentication Required', 'Please authenticate to extend access.');
+                return;
+            }
+
+            await generateNewAccess();
+            const expiryDate = new Date(Date.now() + (5 * 60 * 1000)).toLocaleTimeString();
+            Alert.alert('Access Extended', `New access granted until ${expiryDate} (5 minutes from now).`);
+        } catch (error) {
+            console.error('Error extending access:', error);
+            Alert.alert('Error', 'Failed to extend access. Please try again.');
+        }
+    };
+
+    const copyLinkToClipboard = async () => {
+        try {
+            if (!shareableLink) {
+                Alert.alert('Error', 'No shareable link available to copy.');
+                return;
+            }
+            await Clipboard.setString(shareableLink);
+            Alert.alert('Copied!', 'Shareable link copied to clipboard.');
+        } catch (error) {
+            console.error('Error copying to clipboard:', error);
+            Alert.alert('Error', 'Failed to copy link.');
+        }
+    };
+
+    const revokeShareableAccess = async () => {
+        Alert.alert(
+            'Revoke Access',
+            'Are you sure you want to revoke shareable access? This will invalidate the current QR code and link.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Revoke',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await AsyncStorage.removeItem('userShareId');
+                            await AsyncStorage.removeItem('isAccountRegistered');
+                            await AsyncStorage.removeItem('shareableLink');
+                            await AsyncStorage.removeItem('accessExpiry');
+
+                            setUserShareId('');
+                            setShareableLink('');
+                            setAccessExpiry(null);
+                            setIsAccountRegistered(false);
+
+                            Alert.alert('Access Revoked', 'Shareable access has been revoked successfully.');
+                        } catch (error) {
+                            console.error('Error revoking access:', error);
+                            Alert.alert('Error', 'Failed to revoke access.');
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     const handleEdit = (field: string, currentValue: string) => {
         setEditingField(field);
         setEditValue(currentValue);
         setEditModalVisible(true);
-    };    const handleSaveEdit = () => {
+    }; const handleSaveEdit = () => {
         const updatedProfile = { ...profile };
 
         switch (editingField) {
@@ -329,7 +730,7 @@ For medical use, please consult your healthcare provider.
             };
 
             const formattedData = formatUserData();
-            
+
             await Share.share({
                 message: formattedData,
                 title: 'Namma Medic - User Profile Data',
@@ -369,8 +770,8 @@ For medical use, please consult your healthcare provider.
             'Notification settings can be managed in your device settings:\n\nAndroid: Settings > Apps > Namma Medic > Notifications\niOS: Settings > Notifications > Namma Medic\n\nYou can also manage medicine reminders within the app.',
             [
                 { text: 'Cancel' },
-                { 
-                    text: 'Open Settings', 
+                {
+                    text: 'Open Settings',
                     onPress: () => {
                         try {
                             Linking.openSettings();
@@ -496,218 +897,315 @@ For medical use, please consult your healthcare provider.
 
     return (
         <View style={{ flex: 1 }}>
-            <ScrollView 
-                style={styles.container} 
+            <ScrollView
+                style={styles.container}
                 showsVerticalScrollIndicator={false}
             >
-            <LinearGradient colors={["#8E24AA", "#7B1FA2"]} style={styles.header}>
-                <View style={styles.headerContent}>
-                    <TouchableOpacity 
-                        style={styles.settingsButton}
-                        onPress={() => setSettingsModalVisible(true)}
-                    >
-                        <Ionicons name="settings-outline" size={24} color="white" />
-                    </TouchableOpacity>
-                    <View style={styles.avatarContainer}>
-                        <Ionicons name="person" size={60} color="white" />
-                    </View>
-                    <Text style={styles.userName}>
-                        {profile.firstName && profile.lastName
-                            ? `${profile.firstName} ${profile.lastName}`
-                            : 'User Profile'
-                        }
-                    </Text>
-                    {profile.age > 0 && (
-                        <Text style={styles.userAge}>{profile.age} years old</Text>
-                    )}
-                </View>
-            </LinearGradient>
-
-            <View style={styles.content}>
-                <View pointerEvents="box-none">
-                        {/* Basic Information */}
-                <ProfileCard title="Basic Information">
-                    <EditableField
-                        label="First Name"
-                        value={profile.firstName}
-                        field="firstName"
-                        icon="person-outline"
-                    />
-                    <EditableField
-                        label="Last Name"
-                        value={profile.lastName}
-                        field="lastName"
-                        icon="person-outline"
-                    />
-                    <EditableField
-                        label="Age"
-                        value={profile.age.toString()}
-                        field="age"
-                        icon="calendar-outline"
-                        unit="years"
-                    />
-                    <DatePickerField
-                        label="Date of Birth"
-                        value={profile.dateOfBirth}
-                        onPress={() => setShowDatePicker(true)}
-                        icon="calendar"
-                    />
-                    <TouchableOpacity
-                        style={styles.fieldContainer}
-                        onPress={() => setGenderModalVisible(true)}
-                    >
-                        <View style={styles.fieldContent}>
-                            <Ionicons name="male-female-outline" size={20} color="#666" />
-                            <View style={styles.fieldText}>
-                                <Text style={styles.fieldLabel}>Gender</Text>
-                                <Text style={styles.fieldValue}>
-                                    {profile.gender || 'Not selected'}
-                                </Text>
-                            </View>
-                        </View>
-                        <Ionicons name="chevron-forward" size={20} color="#ccc" />
-                    </TouchableOpacity>
-                </ProfileCard>
-
-                {/* Physical Details */}
-                <ProfileCard title="Physical Details">
-                    <EditableField
-                        label="Height"
-                        value={profile.height.toString()}
-                        field="height"
-                        icon="resize-outline"
-                        unit="cm"
-                    />
-                    <EditableField
-                        label="Weight"
-                        value={profile.weight.toString()}
-                        field="weight"
-                        icon="fitness-outline"
-                        unit="kg"
-                    />
-                    <TouchableOpacity
-                        style={styles.fieldContainer}
-                        onPress={() => setBloodTypeModalVisible(true)}
-                    >
-                        <View style={styles.fieldContent}>
-                            <Ionicons name="water-outline" size={20} color="#666" />
-                            <View style={styles.fieldText}>
-                                <Text style={styles.fieldLabel}>Blood Type</Text>
-                                <Text style={styles.fieldValue}>
-                                    {profile.bloodType || 'Not selected'}
-                                </Text>
-                            </View>
-                        </View>
-                        <Ionicons name="chevron-forward" size={20} color="#ccc" />
-                    </TouchableOpacity>
-
-                    {/* BMI Display */}
-                    {bmi !== 'N/A' && (
-                        <View style={styles.bmiContainer}>
-                            <Text style={styles.bmiLabel}>BMI</Text>
-                            <Text style={styles.bmiValue}>{bmi}</Text>
-                            <Text style={[
-                                styles.bmiCategory,
-                                {
-                                    color:
-                                        bmiCategory === 'Normal' ? '#4CAF50' :
-                                            bmiCategory === 'Underweight' ? '#FF9800' :
-                                                bmiCategory === 'Overweight' ? '#FF5722' : '#F44336'
-                                }
-                            ]}>
-                                {bmiCategory}
-                            </Text>
-                        </View>
-                    )}
-                </ProfileCard>
-
-                {/* Emergency Contact */}
-                <ProfileCard title="Emergency Contact">
-                    <EditableField
-                        label="Name"
-                        value={profile.emergencyContact.name}
-                        field="emergencyContactName"
-                        icon="call-outline"
-                    />
-                    <EditableField
-                        label="Phone"
-                        value={profile.emergencyContact.phone}
-                        field="emergencyContactPhone"
-                        icon="phone-portrait-outline"
-                    />
-                    <EditableField
-                        label="Relationship"
-                        value={profile.emergencyContact.relationship}
-                        field="emergencyContactRelationship"
-                        icon="heart-outline"
-                    />
-                </ProfileCard>
-
-                {/* Doctor Information */}
-                <ProfileCard title="Primary Doctor">
-                    <EditableField
-                        label="Name"
-                        value={profile.doctor.name}
-                        field="doctorName"
-                        icon="medical-outline"
-                    />
-                    <EditableField
-                        label="Phone"
-                        value={profile.doctor.phone}
-                        field="doctorPhone"
-                        icon="call-outline"
-                    />
-                    <EditableField
-                        label="Specialty"
-                        value={profile.doctor.specialty}
-                        field="doctorSpecialty"
-                        icon="library-outline"
-                    />
-                </ProfileCard>
-
-                {/* Medical Conditions */}
-                <ProfileCard title="Medical Conditions & Allergies">
-                    <View style={styles.medicalSection}>
-                        <Text style={styles.medicalSectionTitle}>Conditions</Text>
-                        {profile.medicalConditions.length > 0 ? (
-                            profile.medicalConditions.map((condition, index) => (
-                                <View key={index} style={styles.medicalItemContainer}>
-                                    <Text style={styles.medicalItem}>• {condition}</Text>
-                                    <TouchableOpacity
-                                        onPress={() => removeCondition(condition)}
-                                        style={styles.removeButton}
-                                    >
-                                        <Ionicons name="close-circle" size={18} color="#FF5252" />
-                                    </TouchableOpacity>
-                                </View>
-                            ))
-                        ) : (
-                            <Text style={styles.emptyText}>No medical conditions recorded</Text>
-                        )}
-
-                        <Text style={[styles.medicalSectionTitle, { marginTop: 15 }]}>Allergies</Text>
-                        {profile.allergies.length > 0 ? (
-                            profile.allergies.map((allergy, index) => (
-                                <View key={index} style={styles.medicalItemContainer}>
-                                    <Text style={styles.medicalItem}>• {allergy}</Text>
-                                    <TouchableOpacity
-                                        onPress={() => removeAllergy(allergy)}
-                                        style={styles.removeButton}
-                                    >
-                                        <Ionicons name="close-circle" size={18} color="#FF5252" />
-                                    </TouchableOpacity>
-                                </View>
-                            ))
-                        ) : (
-                            <Text style={styles.emptyText}>No allergies recorded</Text>
-                        )}
-
-                        <TouchableOpacity style={styles.addButton} onPress={handleOpenMedicalForm}>
-                            <Ionicons name="add-circle-outline" size={20} color="#8E24AA" />
-                            <Text style={styles.addButtonText}>Add Medical Information</Text>
+                <LinearGradient colors={["#8E24AA", "#7B1FA2"]} style={styles.header}>
+                    <View style={styles.headerContent}>
+                        <TouchableOpacity
+                            style={styles.settingsButton}
+                            onPress={() => setSettingsModalVisible(true)}
+                        >
+                            <Ionicons name="settings-outline" size={24} color="white" />
                         </TouchableOpacity>
+                        <View style={styles.avatarContainer}>
+                            <Ionicons name="person" size={60} color="white" />
+                        </View>
+                        <Text style={styles.userName}>
+                            {profile.firstName && profile.lastName
+                                ? `${profile.firstName} ${profile.lastName}`
+                                : 'User Profile'
+                            }
+                        </Text>
+                        {profile.age > 0 && (
+                            <Text style={styles.userAge}>{profile.age} years old</Text>
+                        )}
                     </View>
-                </ProfileCard>
+                </LinearGradient>
+
+                {/* Shareable Account Registration Section */}
+                <View style={styles.shareableSection}>
+                    <View style={styles.shareableCard}>
+                        <View style={styles.shareableHeader}>
+                            <Ionicons name="qr-code-outline" size={24} color="#8E24AA" />
+                            <Text style={styles.shareableTitle}>Doctor Access Portal</Text>
+                        </View>
+
+                        {!isAccountRegistered ? (
+                            <View style={styles.registerSection}>
+                                <Text style={styles.shareableDescription}>
+                                    Register for secure shareable access to allow doctors to view your medical history
+                                    through QR code scanning or secure links. This requires device authentication for security.
+                                </Text>
+                                <TouchableOpacity
+                                    style={styles.registerButton}
+                                    onPress={registerShareableAccount}
+                                >
+                                    <Ionicons name="shield-checkmark-outline" size={20} color="white" />
+                                    <Text style={styles.registerButtonText}>Register for Doctor Access</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (isAccountRegistered && userShareId) ? (
+                            <View style={styles.registeredSection}>
+                                {(accessExpiry) && (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
+                                        <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
+                                        <Text style={[styles.statusText, { marginLeft: 8 }]}>
+                                            Shareable access enabled, expires at: {new Date(accessExpiry).toLocaleTimeString()} {Date.now() > accessExpiry ? '(EXPIRED)' : ''}
+                                        </Text>
+                                    </View>
+                                )}
+
+                                <View style={styles.qrSection}>
+                                    <Text style={styles.qrTitle}>Doctor QR Code</Text>
+                                    <View style={styles.qrContainer}>
+                                        {shareableLink ? (
+                                            <QRCode
+                                                value={shareableLink}
+                                                size={120}
+                                                color="#333"
+                                                backgroundColor="white"
+                                            />
+                                        ) : (
+                                            <View style={styles.qrPlaceholder}>
+                                                <Ionicons name="qr-code-outline" size={60} color="#ccc" />
+                                                <Text style={styles.qrPlaceholderText}>Generating QR Code...</Text>
+                                            </View>
+                                        )}
+                                    </View>
+                                    <Text style={styles.qrDescription}>
+                                        Doctors can scan this QR code to access your medical history (5 min access)
+                                    </Text>
+                                </View>
+
+                                <View style={styles.linkSection}>
+                                    <Text style={styles.linkTitle}>Shareable Link</Text>
+                                    <View style={styles.linkContainer}>
+                                        <Text style={styles.linkText} numberOfLines={1} ellipsizeMode="middle">
+                                            {shareableLink}
+                                        </Text>
+                                        <TouchableOpacity
+                                            style={styles.copyButton}
+                                            onPress={copyLinkToClipboard}
+                                        >
+                                            <Ionicons name="copy-outline" size={16} color="#8E24AA" />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+
+                                <View style={styles.actionButtons}>
+                                    <TouchableOpacity
+                                        style={styles.shareButton}
+                                        onPress={shareQRCode}
+                                    >
+                                        <Ionicons name="share-outline" size={16} color="white" />
+                                        <Text style={styles.shareButtonText}>Share</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.revokeButton}
+                                        onPress={revokeShareableAccess}
+                                    >
+                                        <Ionicons name="ban-outline" size={16} color="#f44336" />
+                                        <Text style={styles.revokeButtonText}>Revoke</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        ) : (
+                            <View style={styles.registerSection}>
+                                <Text style={styles.shareableDescription}>
+                                    Loading shareable access data...
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                </View>
+
+                <View style={styles.content}>
+                    <View pointerEvents="box-none">
+                        {/* Basic Information */}
+                        <ProfileCard title="Basic Information">
+                            <EditableField
+                                label="First Name"
+                                value={profile.firstName}
+                                field="firstName"
+                                icon="person-outline"
+                            />
+                            <EditableField
+                                label="Last Name"
+                                value={profile.lastName}
+                                field="lastName"
+                                icon="person-outline"
+                            />
+                            <EditableField
+                                label="Age"
+                                value={profile.age.toString()}
+                                field="age"
+                                icon="calendar-outline"
+                                unit="years"
+                            />
+                            <DatePickerField
+                                label="Date of Birth"
+                                value={profile.dateOfBirth}
+                                onPress={() => setShowDatePicker(true)}
+                                icon="calendar"
+                            />
+                            <TouchableOpacity
+                                style={styles.fieldContainer}
+                                onPress={() => setGenderModalVisible(true)}
+                            >
+                                <View style={styles.fieldContent}>
+                                    <Ionicons name="male-female-outline" size={20} color="#666" />
+                                    <View style={styles.fieldText}>
+                                        <Text style={styles.fieldLabel}>Gender</Text>
+                                        <Text style={styles.fieldValue}>
+                                            {profile.gender || 'Not selected'}
+                                        </Text>
+                                    </View>
+                                </View>
+                                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                            </TouchableOpacity>
+                        </ProfileCard>
+
+                        {/* Physical Details */}
+                        <ProfileCard title="Physical Details">
+                            <EditableField
+                                label="Height"
+                                value={profile.height.toString()}
+                                field="height"
+                                icon="resize-outline"
+                                unit="cm"
+                            />
+                            <EditableField
+                                label="Weight"
+                                value={profile.weight.toString()}
+                                field="weight"
+                                icon="fitness-outline"
+                                unit="kg"
+                            />
+                            <TouchableOpacity
+                                style={styles.fieldContainer}
+                                onPress={() => setBloodTypeModalVisible(true)}
+                            >
+                                <View style={styles.fieldContent}>
+                                    <Ionicons name="water-outline" size={20} color="#666" />
+                                    <View style={styles.fieldText}>
+                                        <Text style={styles.fieldLabel}>Blood Type</Text>
+                                        <Text style={styles.fieldValue}>
+                                            {profile.bloodType || 'Not selected'}
+                                        </Text>
+                                    </View>
+                                </View>
+                                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                            </TouchableOpacity>
+
+                            {/* BMI Display */}
+                            {bmi !== 'N/A' && (
+                                <View style={styles.bmiContainer}>
+                                    <Text style={styles.bmiLabel}>BMI</Text>
+                                    <Text style={styles.bmiValue}>{bmi}</Text>
+                                    <Text style={[
+                                        styles.bmiCategory,
+                                        {
+                                            color:
+                                                bmiCategory === 'Normal' ? '#4CAF50' :
+                                                    bmiCategory === 'Underweight' ? '#FF9800' :
+                                                        bmiCategory === 'Overweight' ? '#FF5722' : '#F44336'
+                                        }
+                                    ]}>
+                                        {bmiCategory}
+                                    </Text>
+                                </View>
+                            )}
+                        </ProfileCard>
+
+                        {/* Emergency Contact */}
+                        <ProfileCard title="Emergency Contact">
+                            <EditableField
+                                label="Name"
+                                value={profile.emergencyContact.name}
+                                field="emergencyContactName"
+                                icon="call-outline"
+                            />
+                            <EditableField
+                                label="Phone"
+                                value={profile.emergencyContact.phone}
+                                field="emergencyContactPhone"
+                                icon="phone-portrait-outline"
+                            />
+                            <EditableField
+                                label="Relationship"
+                                value={profile.emergencyContact.relationship}
+                                field="emergencyContactRelationship"
+                                icon="heart-outline"
+                            />
+                        </ProfileCard>
+
+                        {/* Doctor Information */}
+                        <ProfileCard title="Primary Doctor">
+                            <EditableField
+                                label="Name"
+                                value={profile.doctor.name}
+                                field="doctorName"
+                                icon="medical-outline"
+                            />
+                            <EditableField
+                                label="Phone"
+                                value={profile.doctor.phone}
+                                field="doctorPhone"
+                                icon="call-outline"
+                            />
+                            <EditableField
+                                label="Specialty"
+                                value={profile.doctor.specialty}
+                                field="doctorSpecialty"
+                                icon="library-outline"
+                            />
+                        </ProfileCard>
+
+                        {/* Medical Conditions */}
+                        <ProfileCard title="Medical Conditions & Allergies">
+                            <View style={styles.medicalSection}>
+                                <Text style={styles.medicalSectionTitle}>Conditions</Text>
+                                {profile.medicalConditions.length > 0 ? (
+                                    profile.medicalConditions.map((condition, index) => (
+                                        <View key={index} style={styles.medicalItemContainer}>
+                                            <Text style={styles.medicalItem}>• {condition}</Text>
+                                            <TouchableOpacity
+                                                onPress={() => removeCondition(condition)}
+                                                style={styles.removeButton}
+                                            >
+                                                <Ionicons name="close-circle" size={18} color="#FF5252" />
+                                            </TouchableOpacity>
+                                        </View>
+                                    ))
+                                ) : (
+                                    <Text style={styles.emptyText}>No medical conditions recorded</Text>
+                                )}
+
+                                <Text style={[styles.medicalSectionTitle, { marginTop: 15 }]}>Allergies</Text>
+                                {profile.allergies.length > 0 ? (
+                                    profile.allergies.map((allergy, index) => (
+                                        <View key={index} style={styles.medicalItemContainer}>
+                                            <Text style={styles.medicalItem}>• {allergy}</Text>
+                                            <TouchableOpacity
+                                                onPress={() => removeAllergy(allergy)}
+                                                style={styles.removeButton}
+                                            >
+                                                <Ionicons name="close-circle" size={18} color="#FF5252" />
+                                            </TouchableOpacity>
+                                        </View>
+                                    ))
+                                ) : (
+                                    <Text style={styles.emptyText}>No allergies recorded</Text>
+                                )}
+
+                                <TouchableOpacity style={styles.addButton} onPress={handleOpenMedicalForm}>
+                                    <Ionicons name="add-circle-outline" size={20} color="#8E24AA" />
+                                    <Text style={styles.addButtonText}>Add Medical Information</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </ProfileCard>
                     </View>
                 </View>
             </ScrollView>
@@ -967,7 +1465,7 @@ For medical use, please consult your healthcare provider.
                 onRequestClose={() => setSettingsModalVisible(false)}
             >
                 <View style={styles.settingsModalOverlay}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         style={styles.settingsModalBackdrop}
                         activeOpacity={1}
                         onPress={() => setSettingsModalVisible(false)}
@@ -1056,7 +1554,7 @@ For medical use, please consult your healthcare provider.
                     </View>
                 </View>
             </Modal>
-            
+
             {/* Date Picker */}
             {showDatePicker && (
                 <DateTimePicker
@@ -1436,5 +1934,230 @@ const styles = StyleSheet.create({
     optionTextSelected: {
         color: "#8E24AA",
         fontWeight: "600",
+    },
+
+    // Shareable Account Styles
+    shareableSection: {
+        paddingHorizontal: 20,
+        paddingTop: 15,
+        paddingBottom: 10,
+    },
+    shareableCard: {
+        backgroundColor: "white",
+        borderRadius: 16,
+        padding: 20,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 3,
+        borderWidth: 1,
+        borderColor: "#e8f5e8",
+    },
+    shareableHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 15,
+    },
+    shareableTitle: {
+        fontSize: 18,
+        fontWeight: "700",
+        color: "#333",
+        marginLeft: 10,
+    },
+    registerSection: {
+        alignItems: "center",
+    },
+    shareableDescription: {
+        fontSize: 14,
+        color: "#666",
+        textAlign: "center",
+        lineHeight: 20,
+        marginBottom: 20,
+    },
+    registerButton: {
+        backgroundColor: "#8E24AA",
+        paddingVertical: 12,
+        paddingHorizontal: 24,
+        borderRadius: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        shadowColor: "#8E24AA",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 4,
+    },
+    registerButtonText: {
+        color: "white",
+        fontSize: 16,
+        fontWeight: "600",
+        marginLeft: 8,
+    },
+    registeredSection: {
+        alignItems: "center",
+    },
+    statusRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 20,
+    },
+    statusText: {
+        fontSize: 16,
+        color: "#4CAF50",
+        fontWeight: "600",
+        marginLeft: 8,
+    },
+    expiryRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 15,
+        backgroundColor: "#fff3e0",
+        padding: 8,
+        borderRadius: 6,
+    },
+    expiryText: {
+        fontSize: 14,
+        color: "#ff9800",
+        fontWeight: "500",
+        marginLeft: 6,
+    },
+    qrSection: {
+        alignItems: "center",
+        marginBottom: 20,
+    },
+    qrTitle: {
+        fontSize: 16,
+        fontWeight: "600",
+        color: "#333",
+        marginBottom: 10,
+    },
+    qrContainer: {
+        backgroundColor: "white",
+        padding: 15,
+        borderRadius: 12,
+        borderWidth: 2,
+        borderColor: "#8E24AA",
+        marginBottom: 10,
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: 150,
+    },
+    qrPlaceholder: {
+        alignItems: "center",
+        justifyContent: "center",
+        height: 120,
+        width: 120,
+    },
+    qrPlaceholderText: {
+        fontSize: 12,
+        color: "#ccc",
+        marginTop: 8,
+        textAlign: "center",
+    },
+    qrDescription: {
+        fontSize: 12,
+        color: "#666",
+        textAlign: "center",
+    },
+    linkSection: {
+        width: "100%",
+        marginBottom: 20,
+    },
+    linkTitle: {
+        fontSize: 14,
+        fontWeight: "600",
+        color: "#333",
+        marginBottom: 8,
+    },
+    linkContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: "#f8f9fa",
+        borderRadius: 8,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: "#e0e0e0",
+    },
+    linkText: {
+        flex: 1,
+        fontSize: 12,
+        color: "#666",
+        marginRight: 10,
+    },
+    copyButton: {
+        padding: 4,
+    },
+    actionButtons: {
+        flexDirection: "row",
+        gap: 8,
+        width: "100%",
+    },
+    shareButton: {
+        flex: 1,
+        backgroundColor: "#4CAF50",
+        paddingVertical: 10,
+        paddingHorizontal: 15,
+        borderRadius: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    shareButtonText: {
+        color: "white",
+        fontSize: 13,
+        fontWeight: "600",
+        marginLeft: 4,
+    },
+    extendButton: {
+        flex: 1,
+        backgroundColor: "#ff9800",
+        paddingVertical: 10,
+        paddingHorizontal: 15,
+        borderRadius: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    extendButtonText: {
+        color: "white",
+        fontSize: 13,
+        fontWeight: "600",
+        marginLeft: 4,
+    },
+    revokeButton: {
+        flex: 1,
+        backgroundColor: "white",
+        paddingVertical: 10,
+        paddingHorizontal: 15,
+        borderRadius: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        borderWidth: 1,
+        borderColor: "#f44336",
+    },
+    revokeButtonText: {
+        color: "#f44336",
+        fontSize: 13,
+        fontWeight: "600",
+        marginLeft: 4,
+    },
+    securityInfo: {
+        backgroundColor: "#f8f9fa",
+        borderRadius: 8,
+        padding: 15,
+        marginVertical: 15,
+    },
+    securityRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 8,
+    },
+    securityText: {
+        fontSize: 14,
+        color: "#666",
+        marginLeft: 8,
+        flex: 1,
     },
 });
