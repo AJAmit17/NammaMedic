@@ -508,7 +508,7 @@ export default function StepsScreen() {
                     <Text style={styles.greeting}>Daily Steps</Text>
                     <View style={styles.headerButtons}>
                         <TouchableOpacity style={styles.infoButton} onPress={openGoalModal} activeOpacity={0.7}>
-                            <Ionicons name="create-outline" size={24} color="white" />
+                            <Ionicons name="settings" size={24} color="white" />
                         </TouchableOpacity>
                     </View>
                 </View>

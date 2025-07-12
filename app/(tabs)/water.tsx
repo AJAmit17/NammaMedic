@@ -63,7 +63,7 @@ function WaterBottle({ intake, goal }: WaterIntakeProps) {
     const [waveAnimation] = useState(new Animated.Value(0))
 
     const progress = Math.min(intake / goal, 1)
-    const bottleHeight = height * 0.3 // Further reduced from 0.3 to make bottle more compact
+    const bottleHeight = height * 0.25 // Further reduced from 0.3 to make bottle more compact
     const bottleWidth = width * 0.4
 
     useEffect(() => {
