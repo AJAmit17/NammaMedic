@@ -182,15 +182,8 @@ export default function ProfileScreen() {
             if (status !== 0) return;
             const initialized = await initialize();
             if (!initialized) return;
-            await fetchWeeklySteps();
-            await fetchWeeklyHydration();
-        } catch (error) {
-            console.error('Error initializing Health Connect:', error);
-        }
-    }, []);
 
-    const fetchWeeklySteps = useCallback(async () => {
-        try {
+            // Fetch weekly steps data
             const stepsData = await readRecords('Steps', {
                 timeRangeFilter: {
                     operator: 'between',
@@ -198,8 +191,8 @@ export default function ProfileScreen() {
                     endTime: new Date().toISOString(),
                 },
             });
-            const weeklyStepsArray: WeeklyStepData[] = [];
             const today = new Date();
+            const weeklyStepsArray = [];
             for (let i = 6; i >= 0; i--) {
                 const date = new Date(today);
                 date.setDate(date.getDate() - i);
@@ -210,12 +203,10 @@ export default function ProfileScreen() {
                 dayStart.setHours(0, 0, 0, 0);
                 const dayEnd = new Date(date);
                 dayEnd.setHours(23, 59, 59, 999);
-                const daySteps = stepsData.records
-                    .filter((record) => {
-                        const recordTime = new Date(record.startTime);
-                        return recordTime >= dayStart && recordTime <= dayEnd;
-                    })
-                    .reduce((sum, record) => sum + (record.count || 0), 0);
+                const daySteps = (stepsData.records || stepsData)?.filter((record) => {
+                    const recordTime = new Date(record.startTime);
+                    return recordTime >= dayStart && recordTime <= dayEnd;
+                }).reduce((sum, record) => sum + (record.count || 0), 0);
                 weeklyStepsArray.push({
                     date: dateString,
                     dayName,
@@ -224,13 +215,8 @@ export default function ProfileScreen() {
                 });
             }
             setWeeklySteps(weeklyStepsArray);
-        } catch (error) {
-            console.error('Error fetching weekly steps:', error);
-        }
-    }, []);
 
-    const fetchWeeklyHydration = useCallback(async () => {
-        try {
+            // Fetch weekly hydration data
             const hydrationData = await readRecords('Hydration', {
                 timeRangeFilter: {
                     operator: 'between',
@@ -238,39 +224,31 @@ export default function ProfileScreen() {
                     endTime: new Date().toISOString(),
                 },
             });
-            const weeklyHydrationArray: {
-                date: string;
-                dayName: string;
-                intake: number;
-                isToday: boolean;
-            }[] = [];
-            const today = new Date();
+            const weeklyHydrationArray = [];
             for (let i = 6; i >= 0; i--) {
                 const date = new Date(today);
                 date.setDate(date.getDate() - i);
-                const dateString = date.toISOString().split('T')[0];
                 const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
                 const isToday = i === 0;
+                const dateString = date.toISOString().split('T')[0];
                 const dayStart = new Date(date);
                 dayStart.setHours(0, 0, 0, 0);
                 const dayEnd = new Date(date);
                 dayEnd.setHours(23, 59, 59, 999);
-                const dayHydration = hydrationData.records
-                    .filter((record) => {
-                        const recordDate = new Date(record.startTime);
-                        return recordDate >= dayStart && recordDate <= dayEnd;
-                    })
-                    .reduce((sum, record) => sum + (record.volume?.inLiters || 0), 0);
+                const dayHydration = (hydrationData.records || hydrationData)?.filter((record) => {
+                    const recordDate = new Date(record.startTime);
+                    return recordDate >= dayStart && recordDate <= dayEnd;
+                }).reduce((sum, record) => sum + (record.volume?.inLiters || 0), 0);
                 weeklyHydrationArray.push({
                     date: dateString,
                     dayName,
-                    intake: Math.round(dayHydration * 1000),
+                    intake: Math.round(dayHydration * 1000), // ml
                     isToday,
                 });
             }
             setWeeklyHydration(weeklyHydrationArray);
         } catch (error) {
-            console.error('Error fetching weekly hydration:', error);
+            console.error('Error initializing or fetching Health Connect data:', error);
         }
     }, []);
 
@@ -341,23 +319,103 @@ export default function ProfileScreen() {
 
             console.log('Sending profile to server:', finalPayload);
 
-            const res = await fetch('https://namma-medic.vercel.app/api/webhook', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(finalPayload),
-            });
+            // const res = await fetch('https://namma-medic.vercel.app/api/webhook', {
+            //     method: 'POST',
+            //     headers: {
+            //         'Content-Type': 'application/json',
+            //     },
+            //     body: JSON.stringify(finalPayload),
+            // });
 
-            const text = await res.text();
-            console.log('Response:', res.status, text);
+            // const text = await res.text();
+            // console.log('Response:', res.status, text);
 
         } catch (error) {
             console.error('Error sending profile to server:', error);
         }
     };
 
+    const fetchAndSetWeeklyData = async () => {
+        let weeklyStepsArray: WeeklyStepData[] = [];
+        let weeklyHydrationArray: { date: string; dayName: string; intake: number; isToday: boolean }[] = [];
+        try {
+            const status = await getSdkStatus();
+            if (status !== 0) return { weeklyStepsArray, weeklyHydrationArray };
+            const initialized = await initialize();
+            if (!initialized) return { weeklyStepsArray, weeklyHydrationArray };
+
+            // Fetch weekly steps data
+            const stepsData = await readRecords('Steps', {
+                timeRangeFilter: {
+                    operator: 'between',
+                    startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                    endTime: new Date().toISOString(),
+                },
+            });
+            const today = new Date();
+            for (let i = 6; i >= 0; i--) {
+                const date = new Date(today);
+                date.setDate(date.getDate() - i);
+                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+                const isToday = i === 0;
+                const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+                const dayStart = new Date(date);
+                dayStart.setHours(0, 0, 0, 0);
+                const dayEnd = new Date(date);
+                dayEnd.setHours(23, 59, 59, 999);
+                const daySteps = (stepsData.records || stepsData)?.filter((record) => {
+                    const recordTime = new Date(record.startTime);
+                    return recordTime >= dayStart && recordTime <= dayEnd;
+                }).reduce((sum, record) => sum + (record.count || 0), 0);
+                weeklyStepsArray.push({
+                    date: dateString,
+                    dayName,
+                    steps: daySteps,
+                    isToday,
+                });
+            }
+            setWeeklySteps(weeklyStepsArray);
+
+            // Fetch weekly hydration data
+            const hydrationData = await readRecords('Hydration', {
+                timeRangeFilter: {
+                    operator: 'between',
+                    startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                    endTime: new Date().toISOString(),
+                },
+            });
+            for (let i = 6; i >= 0; i--) {
+                const date = new Date(today);
+                date.setDate(date.getDate() - i);
+                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+                const isToday = i === 0;
+                const dateString = date.toISOString().split('T')[0];
+                const dayStart = new Date(date);
+                dayStart.setHours(0, 0, 0, 0);
+                const dayEnd = new Date(date);
+                dayEnd.setHours(23, 59, 59, 999);
+                const dayHydration = (hydrationData.records || hydrationData)?.filter((record) => {
+                    const recordDate = new Date(record.startTime);
+                    return recordDate >= dayStart && recordDate <= dayEnd;
+                }).reduce((sum, record) => sum + (record.volume?.inLiters || 0), 0);
+                weeklyHydrationArray.push({
+                    date: dateString,
+                    dayName,
+                    intake: Math.round(dayHydration * 1000), // ml
+                    isToday,
+                });
+            }
+            setWeeklyHydration(weeklyHydrationArray);
+            return { weeklyStepsArray, weeklyHydrationArray };
+        } catch (error) {
+            console.error('Error fetching Health Connect data:', error);
+            return { weeklyStepsArray, weeklyHydrationArray };
+        }
+    };
+
     const generateNewAccess = async () => {
+        // Always fetch latest data before sending
+        const { weeklyStepsArray, weeklyHydrationArray } = await fetchAndSetWeeklyData();
         const newShareId = generateUniqueId();
         const expiryTime = Date.now() + (5 * 60 * 1000);
         const newShareableLink = `https://namma-medic.vercel.app/patient/${newShareId}`;
@@ -370,6 +428,8 @@ export default function ProfileScreen() {
         setUserShareId(newShareId);
         setShareableLink(newShareableLink);
         setAccessExpiry(expiryTime);
+        setWeeklySteps(weeklyStepsArray);
+        setWeeklyHydration(weeklyHydrationArray);
 
         // Send profile to server
         await sendProfileToServer(newShareId, expiryTime);

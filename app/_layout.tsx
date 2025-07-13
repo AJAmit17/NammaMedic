@@ -239,6 +239,30 @@ export default function Layout() {
             headerBackVisible: true,
           }}
         />
+        <Stack.Screen
+          name="bloodpressure"
+          options={{
+            headerShown: false,
+            title: "Blood Pressure",
+            headerBackVisible: true,
+          }}
+        />
+        <Stack.Screen
+          name="heartrate"
+          options={{
+            headerShown: false,
+            title: "Heart Rate",
+            headerBackVisible: true,
+          }}
+        />
+        <Stack.Screen
+          name="temperature"
+          options={{
+            headerShown: false,
+            title: "Body Temperature",
+            headerBackVisible: true,
+          }}
+        />
       </Stack>
     </PaperProvider>
   );

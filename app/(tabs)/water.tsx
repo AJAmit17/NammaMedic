@@ -1065,7 +1065,6 @@ export default function WaterScreen() {
                                             ]}>
                                                 {formatDate(dayData.date)}
                                             </Text>
-                                            {dayData.isToday && <View style={styles.todayBadge} />}
                                         </TouchableOpacity>
                                     );
                                 })}

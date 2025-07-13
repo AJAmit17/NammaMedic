@@ -21,15 +21,16 @@ import {
     RecordingMethod
 } from "react-native-health-connect"
 import { LineChart } from "react-native-chart-kit"
-import { 
-    getDateRange, 
-    formatHealthValue, 
+import {
+    getDateRange,
+    formatHealthValue,
     requestEssentialPermissionsWithSettings,
     requestAllPermissionsWithSettings,
     checkPermissionStatus,
     getDeviceMetadata,
     openHealthConnectSettingsScreen
 } from "@/utils/healthUtils"
+import { Link, router } from "expo-router"
 
 const screenWidth = Dimensions.get("window").width
 
@@ -386,7 +387,7 @@ const HealthDashboard: React.FC = () => {
                         const weekStart = new Date(recordDate)
                         weekStart.setDate(recordDate.getDate() - recordDate.getDay())
                         const weekKey = weekStart.toISOString().split('T')[0]
-                        
+
                         if (!weeklyData[weekKey]) {
                             weeklyData[weekKey] = []
                         }
@@ -847,7 +848,7 @@ const HealthDashboard: React.FC = () => {
                     {/* Health Overview Cards */}
                     <View style={styles.statsContainer}>
                         <Text style={styles.sectionTitle}>Today's Overview</Text>
-                        
+
                         <View style={styles.row}>
                             <StatsCard
                                 title="Steps"
@@ -869,6 +870,23 @@ const HealthDashboard: React.FC = () => {
                                 onAdd={() => openInputModal("heartRate")}
                                 trend="stable"
                             />
+                        </View>
+                        <View style={styles.quickNavContainer}>
+                            <TouchableOpacity style={styles.quickNavButton}>
+                                <Link href="/bloodpressure" asChild>
+                                    <Text style={styles.quickNavText}>BP PAGE</Text>
+                                </Link>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.quickNavButton}>
+                                <Link href="/heartrate" asChild>
+                                    <Text style={styles.quickNavText}>HEART PAGE</Text>
+                                </Link>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.quickNavButton}>
+                                <Link href="/temperature" asChild>
+                                    <Text style={styles.quickNavText}>TEMPERATURE PAGE</Text>
+                                </Link>
+                            </TouchableOpacity>
                         </View>
 
                         <View style={styles.row}>
@@ -945,7 +963,7 @@ const HealthDashboard: React.FC = () => {
                     {/* Charts Section */}
                     <View style={styles.statsContainer}>
                         <Text style={styles.sectionTitle}>Weekly Trends</Text>
-                        
+
                         {chartsLoading ? (
                             <View style={styles.loadingContainer}>
                                 <Text style={styles.loadingText}>Loading charts...</Text>
@@ -1014,7 +1032,7 @@ const HealthDashboard: React.FC = () => {
                                 <Text style={styles.modalTitle}>
                                     Add {inputType === "bloodPressure" ? "Blood Pressure" : inputType === "bodyTemp" ? "Body Temperature" : inputType === "heartRate" ? "Heart Rate" : inputType}
                                 </Text>
-                                
+
                                 {inputType === "bloodPressure" ? (
                                     <>
                                         <TextInput
@@ -1037,11 +1055,11 @@ const HealthDashboard: React.FC = () => {
                                         style={styles.input}
                                         placeholder={
                                             inputType === "weight" ? "Weight in kg (e.g., 70.5)" :
-                                            inputType === "height" ? "Height in cm (e.g., 175)" :
-                                            inputType === "heartRate" ? "Heart rate (e.g., 72)" :
-                                            inputType === "bodyTemp" ? "Temperature in °C (e.g., 36.8)" :
-                                            inputType === "hydration" ? "Water in ml (e.g., 250)" :
-                                            "Enter value"
+                                                inputType === "height" ? "Height in cm (e.g., 175)" :
+                                                    inputType === "heartRate" ? "Heart rate (e.g., 72)" :
+                                                        inputType === "bodyTemp" ? "Temperature in °C (e.g., 36.8)" :
+                                                            inputType === "hydration" ? "Water in ml (e.g., 250)" :
+                                                                "Enter value"
                                         }
                                         value={inputValue}
                                         onChangeText={setInputValue}
@@ -1050,18 +1068,18 @@ const HealthDashboard: React.FC = () => {
                                 )}
 
                                 <View style={styles.modalButtons}>
-                                    <TouchableOpacity 
-                                        style={[styles.modalButton, styles.cancelButton]} 
+                                    <TouchableOpacity
+                                        style={[styles.modalButton, styles.cancelButton]}
                                         onPress={closeInputModal}
                                     >
                                         <Text style={[styles.modalButtonText, styles.cancelButtonText]}>Cancel</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity 
+                                    <TouchableOpacity
                                         style={[
-                                            styles.modalButton, 
+                                            styles.modalButton,
                                             styles.saveButton,
                                             saving && styles.saveButtonDisabled
-                                        ]} 
+                                        ]}
                                         onPress={saveHealthData}
                                         disabled={saving}
                                     >
@@ -1085,14 +1103,14 @@ const HealthDashboard: React.FC = () => {
                                     Your privacy is important - data stays on your device.
                                 </Text>
                                 <View style={styles.modalButtons}>
-                                    <TouchableOpacity 
-                                        style={[styles.modalButton, styles.cancelButton]} 
+                                    <TouchableOpacity
+                                        style={[styles.modalButton, styles.cancelButton]}
                                         onPress={skipPermissions}
                                     >
                                         <Text style={[styles.modalButtonText, styles.cancelButtonText]}>Skip</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity 
-                                        style={[styles.modalButton, styles.saveButton]} 
+                                    <TouchableOpacity
+                                        style={[styles.modalButton, styles.saveButton]}
                                         onPress={retryPermissions}
                                     >
                                         <Text style={[styles.modalButtonText, styles.saveButtonText]}>Grant Access</Text>
@@ -1103,7 +1121,7 @@ const HealthDashboard: React.FC = () => {
                     </Modal>
                 </ScrollView>
             </SafeAreaView>
-        </SafeAreaProvider>
+        </SafeAreaProvider >
     )
 }
 
@@ -1415,6 +1433,33 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: "#6C63FF",
         fontWeight: "500",
+    },
+    quickNavContainer: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 16,
+        gap: 12,
+        paddingVertical: 8,
+    },
+    quickNavButton: {
+        flex: 1,
+        backgroundColor: "#6C63FF",
+        borderRadius: 12,
+        paddingVertical: 12,
+        marginHorizontal: 2,
+        alignItems: "center",
+        shadowColor: "#6C63FF",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    quickNavText: {
+        color: "white",
+        fontWeight: "700",
+        fontSize: 16,
+        letterSpacing: 1,
     },
 })
 
