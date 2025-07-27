@@ -35,7 +35,7 @@ export default function TabLayout() {
                     ),
                 }}
             />
-            <Tabs.Screen
+            {/* <Tabs.Screen
                 name="steps"
                 options={{
                     title: 'Steps',
@@ -52,7 +52,7 @@ export default function TabLayout() {
                         <Ionicons name="water" size={size} color={color} />
                     ),
                 }}
-            />
+            /> */}
             <Tabs.Screen
                 name="health-dashboard"
                 options={{

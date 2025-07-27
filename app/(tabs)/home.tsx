@@ -28,6 +28,7 @@ import {
   requestNotificationPermissions,
   scheduleMedicationReminder,
 } from "@/utils/notifications";
+import { useHealthData } from '../../hooks/health';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get("window");
@@ -152,6 +153,13 @@ export default function HomeScreen() {
   const [completedDoses, setCompletedDoses] = useState(0);
   const [doseHistory, setDoseHistory] = useState<DoseHistory[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
+  const { 
+    hasPermissions: hasHealthPermissions, 
+    dailyData, 
+    loadDailyData,
+    isLoading 
+  } = useHealthData();
 
   const loadMedications = useCallback(async () => {
     try {
@@ -298,8 +306,14 @@ export default function HomeScreen() {
 
       loadMedications();
       loadUserProfile();
+      
+      // Load health data if permissions are available
+      if (hasHealthPermissions) {
+        loadDailyData();
+      }
+      
       return () => unsubscribe();
-    }, [loadMedications, loadUserProfile])
+    }, [loadMedications, loadUserProfile, hasHealthPermissions, loadDailyData])
   );
 
   const handleTakeDose = async (medication: Medication, timeSlot?: string) => {
@@ -470,6 +484,13 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Health Metrics Section */}
+        {hasHealthPermissions && dailyData && (
+          <View style={styles.healthMetricsContainer}>
+            <Text style={styles.sectionTitle}>Today's Health</Text>
+          </View>
+        )}
 
         <View>
           <TouchableOpacity>
@@ -961,5 +982,16 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.9)",
     textAlign: "center",
     fontWeight: "500",
+  },
+  // Health Metrics Styles
+  healthMetricsContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 25,
+  },
+  healthMetricsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginTop: 15,
   },
 });

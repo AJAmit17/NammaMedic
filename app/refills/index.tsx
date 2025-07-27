@@ -99,6 +99,12 @@ export default function RefillTrackerScreen() {
             >
               <Text style={styles.addButtonText}>Add Medication</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() => router.push("/pharmacy")}
+            >
+              <Text style={styles.addButtonText}>Pharmacy</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           medications.map((medication) => {

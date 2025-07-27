@@ -20,6 +20,8 @@ import {
     checkPermissionStatus,
     requestEssentialPermissionsWithSettings
 } from "@/utils/healthUtils"
+import { Appbar } from "react-native-paper"
+import { router } from "expo-router"
 
 const { width, height } = Dimensions.get("window")
 
@@ -853,7 +855,12 @@ export default function WaterScreen() {
             <LinearGradient colors={["#0288D1", "#0277BD", "#01579B"]} style={styles.header}>
                 <View style={styles.headerContent}>
                     <View style={styles.headerTop}>
-                        <View style={{ width: 40 }} />
+                        <Appbar.BackAction
+                            onPress={() => router.back()}
+                            iconColor="#ffffff"
+                            size={24}
+                            style={{ backgroundColor: 'rgba(255, 255, 255, 0.2)', margin: 0 }}
+                        />
                         <Text style={styles.greeting}>Daily Hydration</Text>
                         <TouchableOpacity
                             style={styles.goalButton}
@@ -1836,7 +1843,7 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         justifyContent: "space-between",
         alignItems: "flex-end",
-        height: 120,
+        height: 160,
         marginBottom: 20,
         paddingHorizontal: 5,
     },

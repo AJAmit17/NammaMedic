@@ -7,6 +7,7 @@ import { useEffect, useState, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import * as Updates from 'expo-updates';
+import { useHealthData } from "@/hooks/health/useHealthData";
 
 const theme = {
   ...MD3LightTheme,
@@ -41,27 +42,27 @@ function PaperHeader({ title, showBack = true }: PaperHeaderProps) {
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
       />
-      <Appbar.Header 
-        style={{ 
+      <Appbar.Header
+        style={{
           backgroundColor: 'transparent',
           elevation: 0,
           shadowOpacity: 0,
         }}
       >
         {showBack && (
-          <Appbar.BackAction 
-            onPress={() => router.back()} 
+          <Appbar.BackAction
+            onPress={() => router.back()}
             iconColor="#ffffff"
             style={{ backgroundColor: 'rgba(255, 255, 255, 0.2)' }}
           />
         )}
-        <Appbar.Content 
-          title={title} 
-          titleStyle={{ 
-            color: '#ffffff', 
-            fontSize: 22, 
-            fontWeight: '700' 
-          }} 
+        <Appbar.Content
+          title={title}
+          titleStyle={{
+            color: '#ffffff',
+            fontSize: 22,
+            fontWeight: '700'
+          }}
         />
       </Appbar.Header>
     </View>
@@ -79,7 +80,7 @@ function useNotificationObserver() {
       }
     }
 
-    Notifications.getLastNotificationResponseAsync() 
+    Notifications.getLastNotificationResponseAsync()
       .then(response => {
         if (!isMounted || !response?.notification) {
           return;
@@ -111,7 +112,7 @@ function useUpdateChecker() {
     try {
       setIsCheckingUpdates(true);
       const update = await Updates.checkForUpdateAsync();
-      
+
       if (update.isAvailable) {
         setUpdateAvailable(true);
         Alert.alert(
@@ -164,6 +165,29 @@ export default function Layout() {
   useNotificationObserver();
   useUpdateChecker();
 
+  const { requestPermissions, hasPermissions, isLoading } = useHealthData();
+
+  useEffect(() => {
+    const initializeHealthPermissions = async () => {
+      if (!hasPermissions && !isLoading) {
+        try {
+          const granted = await requestPermissions();
+          if (!granted) {
+            Alert.alert(
+              'Health Permissions',
+              'Health data access is required for full app functionality. You can grant permissions later in Settings.',
+              [{ text: 'OK' }]
+            );
+          }
+        } catch (error) {
+          console.error('Error initializing health permissions:', error);
+        }
+      }
+    };
+
+    initializeHealthPermissions();
+  }, [hasPermissions, isLoading, requestPermissions]);
+
   return (
     <PaperProvider theme={theme}>
       <StatusBar style="light" />
@@ -174,8 +198,8 @@ export default function Layout() {
           animation: "slide_from_right",
           navigationBarHidden: true,
           header: ({ options }) => (
-            <PaperHeader 
-              title={options.title || ""} 
+            <PaperHeader
+              title={options.title || ""}
               showBack={options.headerBackVisible !== false}
             />
           ),
@@ -240,10 +264,18 @@ export default function Layout() {
           }}
         />
         <Stack.Screen
-          name="bloodpressure"
+          name="steps"
           options={{
             headerShown: false,
-            title: "Blood Pressure",
+            title: "Steps",
+            headerBackVisible: true,
+          }}
+        />
+        <Stack.Screen
+          name="water"
+          options={{
+            headerShown: false,
+            title: "Hydration",
             headerBackVisible: true,
           }}
         />
@@ -260,6 +292,22 @@ export default function Layout() {
           options={{
             headerShown: false,
             title: "Body Temperature",
+            headerBackVisible: true,
+          }}
+        />
+        <Stack.Screen
+          name="prescription"
+          options={{
+            headerShown: false,
+            title: "Prescription",
+            headerBackVisible: true,
+          }}
+        />
+        <Stack.Screen
+          name="pharmacy"
+          options={{
+            headerShown: true,
+            title: "Pharmacy",
             headerBackVisible: true,
           }}
         />

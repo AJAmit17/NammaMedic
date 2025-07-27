@@ -27,6 +27,8 @@ import {
     checkPermissionStatus,
     openHealthConnectSettingsScreen,
 } from '@/utils/healthUtils';
+import { Appbar } from 'react-native-paper';
+import { router } from 'expo-router';
 const { width } = Dimensions.get('window');
 
 interface StepCounterProps {
@@ -504,7 +506,12 @@ export default function StepsScreen() {
         <LinearGradient colors={["#0288D1", "#0277BD", "#01579B"]} style={styles.header}>
             <View style={styles.headerContent}>
                 <View style={styles.headerTop}>
-                    <View style={{ width: 40 }} />
+                    <Appbar.BackAction
+                        onPress={() => router.back()}
+                        iconColor="#ffffff"
+                        size={24}
+                        style={{ backgroundColor: 'rgba(255, 255, 255, 0.2)', margin: 0 }}
+                    />
                     <Text style={styles.greeting}>Daily Steps</Text>
                     <View style={styles.headerButtons}>
                         <TouchableOpacity style={styles.infoButton} onPress={openGoalModal} activeOpacity={0.7}>
@@ -631,7 +638,7 @@ export default function StepsScreen() {
                                             <View style={styles.barContainer}>
                                                 {day.steps > 0 && (
                                                     <Text style={[
-                                                        styles.stepsCountLabel, 
+                                                        styles.stepsCountLabel,
                                                         isToday && styles.todayStepsLabel,
                                                         hasReachedGoal && styles.goalReachedStepsLabel
                                                     ]}>
@@ -649,7 +656,7 @@ export default function StepsScreen() {
                                                 />
                                             </View>
                                             <Text style={[
-                                                styles.dayLabel, 
+                                                styles.dayLabel,
                                                 isToday && styles.todayLabel,
                                                 hasReachedGoal && styles.goalReachedLabel
                                             ]}>

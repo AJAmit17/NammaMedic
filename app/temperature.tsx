@@ -6,7 +6,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage"
 import {
     initialize,
     insertRecords,
-    deleteRecordsByUuids,
     readRecords,
     getSdkStatus,
     SdkAvailabilityStatus,
@@ -16,14 +15,20 @@ import {
 import * as Device from "expo-device"
 import {
     checkPermissionStatus,
+    getDateRange,
     requestEssentialPermissionsWithSettings
 } from "@/utils/healthUtils"
+import { Appbar } from "react-native-paper"
+import { router } from "expo-router"
+import { LineChart } from "react-native-chart-kit";
 
 const { width, height } = Dimensions.get("window")
 
 interface TemperatureProps {
-    celsius: number
-    fahrenheit: number
+    // celsius: number
+    // fahrenheit: number
+    value: number
+    unit: 'celsius' | 'fahrenheit'
 }
 
 interface WeeklyTemperatureData {
@@ -47,18 +52,25 @@ interface DayDetailData {
     }>;
 }
 
-function TemperatureGauge({ celsius, fahrenheit }: TemperatureProps) {
+function TemperatureGauge({ value, unit }: TemperatureProps) {
     const [gaugeAnimation] = useState(new Animated.Value(0))
-    
-    const getTempCategory = (temp: number) => {
-        if (temp < 36.1) return { category: "Low", color: "#4FC3F7" }
-        if (temp <= 37.2) return { category: "Normal", color: "#4CAF50" }
-        if (temp <= 38.0) return { category: "Mild Fever", color: "#FF9800" }
-        if (temp <= 39.0) return { category: "Moderate Fever", color: "#FF5722" }
+
+    const getTempCategory = (temp: number, tempUnit: 'celsius' | 'fahrenheit') => {
+        // Convert to celsius for consistent checking if fahrenheit
+        const celsius = tempUnit === 'fahrenheit' ? (temp - 32) * 5 / 9 : temp
+
+        if (celsius < 36.1) return { category: "Low", color: "#ff9100ff" }
+        if (celsius <= 37.2) return { category: "Normal", color: "#ffa600ff" }
+        if (celsius <= 38.0) return { category: "Mild Fever", color: "#FF9800" }
+        if (celsius <= 39.0) return { category: "Moderate Fever", color: "#FF5722" }
         return { category: "High Fever", color: "#F44336" }
     }
 
-    const tempInfo = getTempCategory(celsius)
+    // Convert between units as needed
+    const celsius = unit === 'fahrenheit' ? (value - 32) * 5 / 9 : value
+    const fahrenheit = unit === 'celsius' ? (value * 9 / 5) + 32 : value
+
+    const tempInfo = getTempCategory(value, unit)
     const gaugeSize = width * 0.7
 
     useEffect(() => {
@@ -67,11 +79,11 @@ function TemperatureGauge({ celsius, fahrenheit }: TemperatureProps) {
             duration: 1000,
             useNativeDriver: false,
         }).start()
-    }, [celsius])
+    }, [value])
 
     const fillHeight = gaugeAnimation.interpolate({
         inputRange: [0, 1],
-        outputRange: [0, (celsius - 35) / 7 * 100], // Scale from 35°C to 42°C
+        outputRange: [0, (celsius - 30) / 10 * (gaugeSize - 20)],
         extrapolate: "clamp",
     })
 
@@ -84,24 +96,28 @@ function TemperatureGauge({ celsius, fahrenheit }: TemperatureProps) {
                 <View style={styles.thermometerTube}>
                     <Animated.View style={[
                         styles.thermometerFill,
-                        { 
+                        {
                             height: fillHeight,
-                            backgroundColor: tempInfo.color 
+                            backgroundColor: tempInfo.color
                         }
                     ]} />
                 </View>
                 <View style={styles.thermometerScale}>
-                    {[42, 40, 38, 36, 34].map((temp) => (
+                    {[40, 38, 36, 34, 32, 30].map((temp) => (
                         <View key={temp} style={styles.scaleMarker}>
                             <Text style={styles.scaleText}>{temp}°</Text>
                         </View>
                     ))}
                 </View>
             </View>
-            
+
             <View style={styles.tempReadings}>
-                <Text style={styles.tempCelsius}>{celsius.toFixed(1)}°C</Text>
-                <Text style={styles.tempFahrenheit}>{fahrenheit.toFixed(1)}°F</Text>
+                <Text style={styles.tempCelsius}>
+                    {celsius.toFixed(1)}°C
+                </Text>
+                <Text style={styles.tempFahrenheit}>
+                    {fahrenheit.toFixed(1)}°F
+                </Text>
                 <View style={[styles.categoryBadge, { backgroundColor: tempInfo.color }]}>
                     <Text style={styles.categoryText}>{tempInfo.category}</Text>
                 </View>
@@ -111,8 +127,7 @@ function TemperatureGauge({ celsius, fahrenheit }: TemperatureProps) {
 }
 
 export default function TemperatureScreen() {
-    const [bodyTemperature, setBodyTemperature] = useState(36.5) // Normal body temperature in Celsius
-    const [animatedValue] = useState(new Animated.Value(0))
+    const [bodyTemperature, setBodyTemperature] = useState(0)
     const [isHealthConnectInitialized, setIsHealthConnectInitialized] = useState(false)
     const [healthPermissions, setHealthPermissions] = useState<any[]>([])
     const [tempRecordIds, setTempRecordIds] = useState<string[]>([])
@@ -120,7 +135,6 @@ export default function TemperatureScreen() {
     // Modal states
     const [showAddModal, setShowAddModal] = useState(false)
     const [newTemperature, setNewTemperature] = useState("")
-    const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C')
     const [isLoading, setIsLoading] = useState(false)
 
     // Refresh control state
@@ -132,16 +146,6 @@ export default function TemperatureScreen() {
     const [selectedDayData, setSelectedDayData] = useState<DayDetailData | null>(null)
     const [loadingDayDetail, setLoadingDayDetail] = useState(false)
 
-    // Convert Celsius to Fahrenheit
-    const celsiusToFahrenheit = (celsius: number): number => {
-        return (celsius * 9/5) + 32
-    }
-
-    // Convert Fahrenheit to Celsius
-    const fahrenheitToCelsius = (fahrenheit: number): number => {
-        return (fahrenheit - 32) * 5/9
-    }
-
     // Get today's date string for storage key
     const getTodayKey = () => {
         const today = new Date()
@@ -152,6 +156,12 @@ export default function TemperatureScreen() {
     const canWriteTemperature = (): boolean => {
         return healthPermissions.some(
             permission => permission.recordType === 'BodyTemperature' && permission.accessType === 'write'
+        )
+    }
+
+    const canReadTemperature = (): boolean => {
+        return healthPermissions.some(
+            permission => permission.recordType === 'BodyTemperature' && permission.accessType === 'read'
         )
     }
 
@@ -201,13 +211,13 @@ export default function TemperatureScreen() {
     const getDeviceMetadata = () => {
         return {
             manufacturer: Device.manufacturer || 'Unknown',
-            model: Device.modelName || Device.deviceName || 'Unknown',
+            model: Device.modelName || 'Unknown',
             type: DeviceType.TYPE_PHONE
         };
     };
 
     // Write body temperature to Health Connect
-    const writeTemperatureToHealth = async (celsius: number) => {
+    const writeTemperatureToHealth = async (value: number) => {
         if (!isHealthConnectInitialized || !canWriteTemperature()) {
             return;
         }
@@ -215,29 +225,29 @@ export default function TemperatureScreen() {
         try {
             const now = new Date().toISOString();
             const deviceInfo = getDeviceMetadata();
-            
+
             const record: any = {
                 recordType: 'BodyTemperature',
                 temperature: {
-                    inCelsius: celsius
+                    value: value,
+                    unit: 'celsius',
                 },
-                measurementLocation: 1, // Oral
-                startTime: now,
-                endTime: now,
+                measurementLocation: 1,
+                time: now,
                 metadata: {
                     recordingMethod: RecordingMethod.RECORDING_METHOD_MANUAL_ENTRY,
                     device: deviceInfo,
-                },
+                }
             }
 
-            //@ts-ignore
+            console.log(record)
+
             const recordIds = await insertRecords([record])
             console.log("Temperature record created:", recordIds)
-            
+
             // Store the record ID for potential deletion later
             if (recordIds && recordIds.length > 0) {
                 setTempRecordIds(prevIds => [...prevIds, recordIds[0]]);
-                // Also save to AsyncStorage to persist across app restarts
                 try {
                     const storedIds = await AsyncStorage.getItem('temp_record_ids') || '[]';
                     const idsArray = JSON.parse(storedIds);
@@ -246,7 +256,7 @@ export default function TemperatureScreen() {
                     console.error('Error saving record ID:', error);
                 }
             }
-            
+
             return recordIds?.[0] || null;
         } catch (error) {
             console.error("Error writing temperature to Health Connect:", error)
@@ -255,11 +265,8 @@ export default function TemperatureScreen() {
     }
 
     // Add temperature measurement
-    const addTemperature = async (temp: number, unit: 'C' | 'F') => {
+    const addTemperature = async (temp: number) => {
         let celsius = temp;
-        if (unit === 'F') {
-            celsius = fahrenheitToCelsius(temp);
-        }
 
         if (celsius < 30 || celsius > 45) {
             Alert.alert("Invalid Reading", "Please enter a valid temperature reading.")
@@ -311,41 +318,39 @@ export default function TemperatureScreen() {
             return
         }
 
-        await addTemperature(temp, temperatureUnit)
+        await addTemperature(temp)
         setShowAddModal(false)
     }
 
     // Sync temperature data with Google Health Connect
     const syncWithHealthConnect = async () => {
-        if (!isHealthConnectInitialized || !canWriteTemperature()) {
+        if (!isHealthConnectInitialized || !canReadTemperature()) {
             return false;
         }
 
         try {
-            // Get today's date range
-            const today = new Date();
-            const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
-            const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+            const dateRange = getDateRange(1)
 
-            // Read temperature data from Health Connect for today
-            const tempData = await readRecords("BodyTemperature", {
+            const temperatureData = await readRecords("BodyTemperature", {
                 timeRangeFilter: {
                     operator: "between",
-                    startTime: startOfDay.toISOString(),
-                    endTime: endOfDay.toISOString(),
+                    ...dateRange,
                 },
-            });
+            })
 
-            if (tempData.records.length > 0) {
-                // Get the most recent reading
-                const latestReading = tempData.records[tempData.records.length - 1];
-                const celsius = (latestReading as any).temperature?.inCelsius || 36.5;
+            let totalTemp = 0
+            let sampleCount = 0
 
-                // Update local state and storage
-                setBodyTemperature(celsius);
-                await saveTemperature(celsius);
-            }
+            temperatureData.records.forEach((record: any) => {
+                if (record.temperature && record.temperature.inCelsius > 0) {
+                    totalTemp += record.temperature.inCelsius
+                    sampleCount++
+                }
+            })
 
+            setBodyTemperature(sampleCount > 0 ? Math.round((totalTemp / sampleCount) * 10) / 10 : 0)
+
+            Alert.alert("Sync Successful", "Body Temperature data synced with Google Health.")
             return true;
         } catch (error) {
             console.error('Error syncing with Health Connect:', error);
@@ -357,7 +362,7 @@ export default function TemperatureScreen() {
     const onRefresh = async () => {
         setIsRefreshing(true);
         try {
-            if (isHealthConnectInitialized && canWriteTemperature()) {
+            if (isHealthConnectInitialized && canReadTemperature()) {
                 const syncSuccess = await syncWithHealthConnect();
                 if (syncSuccess) {
                     await loadWeeklyTempData();
@@ -378,7 +383,8 @@ export default function TemperatureScreen() {
     // Load weekly temperature data
     const loadWeeklyTempData = async () => {
         try {
-            if (!isHealthConnectInitialized || !canWriteTemperature()) {
+            if (!isHealthConnectInitialized || !canReadTemperature()) {
+                console.log('Health Connect not initialized or no read permissions');
                 // Fallback: create empty data for the past 7 days
                 const fallbackData: WeeklyTemperatureData[] = [];
                 const today = new Date();
@@ -415,9 +421,11 @@ export default function TemperatureScreen() {
 
             for (let i = 6; i >= 0; i--) {
                 const date = new Date(today);
-                date.setDate(date.getDate() - i);
+                date.setDate(today.getDate() - i);
+
                 const dateString = date.toISOString().split('T')[0];
 
+                // Filter records for this specific day
                 const dayStart = new Date(date);
                 dayStart.setHours(0, 0, 0, 0);
                 const dayEnd = new Date(date);
@@ -425,24 +433,33 @@ export default function TemperatureScreen() {
 
                 const dayTempData = tempData.records
                     .filter((record: any) => {
-                        const recordDate = new Date(record.startTime);
+                        const recordDate = new Date(record.time);
                         return recordDate >= dayStart && recordDate <= dayEnd;
                     });
 
                 let averageTemp = 0, maxTemp = 0, minTemp = 0;
                 if (dayTempData.length > 0) {
-                    const tempValues = dayTempData.map((record: any) => (record as any).temperature?.inCelsius || 0);
-                    averageTemp = tempValues.reduce((sum: number, temp: number) => sum + temp, 0) / tempValues.length;
-                    maxTemp = Math.max(...tempValues);
-                    minTemp = Math.min(...tempValues);
+                    const allTempValues: number[] = [];
+
+                    dayTempData.forEach((record: any) => {
+                        if (record.temperature && record.temperature.inCelsius > 0) {
+                            allTempValues.push(record.temperature.inCelsius);
+                        }
+                    });
+
+                    if (allTempValues.length > 0) {
+                        averageTemp = Math.round((allTempValues.reduce((sum: number, temp: number) => sum + temp, 0) / allTempValues.length) * 10) / 10;
+                        maxTemp = Math.round(Math.max(...allTempValues) * 10) / 10;
+                        minTemp = Math.round(Math.min(...allTempValues) * 10) / 10;
+                    }
                 }
 
                 weeklyTempArray.push({
                     date: dateString,
                     dayName: getDayName(date),
-                    averageTemp: Math.round(averageTemp * 10) / 10,
-                    maxTemp: Math.round(maxTemp * 10) / 10,
-                    minTemp: Math.round(minTemp * 10) / 10,
+                    averageTemp,
+                    maxTemp,
+                    minTemp,
                     isToday: i === 0,
                 });
             }
@@ -466,13 +483,24 @@ export default function TemperatureScreen() {
     // Load day detail data
     const loadDayDetailData = async (selectedDate: string) => {
         setLoadingDayDetail(true);
+        console.log('Loading day detail data for:', selectedDate);
+
         try {
+            if (!isHealthConnectInitialized || !canReadTemperature()) {
+                console.log('Health Connect not initialized or no read permissions');
+                Alert.alert('No Permissions', 'Temperature read permissions are required to view detailed data.');
+                setLoadingDayDetail(false);
+                return;
+            }
+
             const date = new Date(selectedDate);
             const startOfDay = new Date(date);
             startOfDay.setHours(0, 0, 0, 0);
 
             const endOfDay = new Date(date);
             endOfDay.setHours(23, 59, 59, 999);
+
+            console.log('Fetching temperature data from:', startOfDay.toISOString(), 'to:', endOfDay.toISOString());
 
             const dayTempData = await readRecords('BodyTemperature', {
                 timeRangeFilter: {
@@ -482,9 +510,12 @@ export default function TemperatureScreen() {
                 },
             });
 
+            console.log('Temperature records found:', dayTempData.records.length);
+
             // Process hourly data
             const hourlyTemp: Array<{ hour: number; temperature: number }> = [];
             let avgTemp = 0, maxTemp = 0, minTemp = 999;
+            let totalTemp = 0, totalReadings = 0;
 
             for (let hour = 0; hour < 24; hour++) {
                 const hourStart = new Date(date);
@@ -493,26 +524,47 @@ export default function TemperatureScreen() {
                 hourEnd.setHours(hour, 59, 59, 999);
 
                 const hourData = dayTempData.records.filter((record: any) => {
-                    const recordDate = new Date(record.startTime);
+                    const recordDate = new Date(record.time);
                     return recordDate >= hourStart && recordDate <= hourEnd;
                 });
 
                 let hourTemp = 0;
                 if (hourData.length > 0) {
-                    const hourTempValues = hourData.map((record: any) => (record as any).temperature?.inCelsius || 0);
-                    hourTemp = hourTempValues.reduce((sum: number, temp: number) => sum + temp, 0) / hourTempValues.length;
+                    // Body Temperature records with direct temperature value
+                    const hourTempValues: number[] = [];
+
+                    hourData.forEach((record: any) => {
+                        if (record.temperature && record.temperature.inCelsius > 0) {
+                            hourTempValues.push(record.temperature.inCelsius);
+                        }
+                    });
+
+                    if (hourTempValues.length > 0) {
+                        hourTemp = Math.round((hourTempValues.reduce((sum: number, temp: number) => sum + temp, 0) / hourTempValues.length) * 10) / 10;
+                        totalTemp += hourTemp * hourTempValues.length;
+                        totalReadings += hourTempValues.length;
+                    }
                 }
 
-                hourlyTemp.push({ hour, temperature: Math.round(hourTemp * 10) / 10 });
+                hourlyTemp.push({ hour, temperature: hourTemp });
             }
 
-            // Calculate day averages
-            const validReadings = dayTempData.records.filter((record: any) => (record as any).temperature?.inCelsius > 0);
-            if (validReadings.length > 0) {
-                const tempValues = validReadings.map((record: any) => (record as any).temperature?.inCelsius);
-                avgTemp = tempValues.reduce((sum: number, temp: number) => sum + temp, 0) / tempValues.length;
-                maxTemp = Math.max(...tempValues);
-                minTemp = Math.min(...tempValues);
+            // Calculate day averages from all readings
+            const allTempValues: number[] = [];
+            dayTempData.records.forEach((record: any) => {
+                if (record.temperature && record.temperature.inCelsius > 0) {
+                    allTempValues.push(record.temperature.inCelsius);
+                }
+            });
+
+            if (allTempValues.length > 0) {
+                avgTemp = Math.round((allTempValues.reduce((sum: number, temp: number) => sum + temp, 0) / allTempValues.length) * 10) / 10;
+                maxTemp = Math.round(Math.max(...allTempValues) * 10) / 10;
+                minTemp = Math.round(Math.min(...allTempValues) * 10) / 10;
+            } else {
+                avgTemp = 0;
+                maxTemp = 0;
+                minTemp = 0;
             }
 
             const getTempCategory = (temp: number) => {
@@ -525,19 +577,20 @@ export default function TemperatureScreen() {
 
             const dayDetailData: DayDetailData = {
                 date: selectedDate,
-                averageTemp: Math.round(avgTemp * 10) / 10,
-                maxTemp: Math.round(maxTemp * 10) / 10,
-                minTemp: minTemp === 999 ? 0 : Math.round(minTemp * 10) / 10,
+                averageTemp: avgTemp,
+                maxTemp: maxTemp,
+                minTemp: minTemp,
                 category: getTempCategory(avgTemp),
                 hourlyData: hourlyTemp,
             };
 
             setSelectedDayData(dayDetailData);
-            setIsDayDetailModalVisible(true);
+
         } catch (error) {
             console.error('Error loading day detail data:', error);
             Alert.alert('Error', 'Failed to load detailed data for the selected day.');
         } finally {
+            setIsDayDetailModalVisible(true);
             setLoadingDayDetail(false);
         }
     };
@@ -560,13 +613,14 @@ export default function TemperatureScreen() {
     // Load saved temperature for today
     const loadTemperature = async () => {
         try {
-            const todayKey = getTodayKey()
-            const savedTemp = await AsyncStorage.getItem(todayKey)
+            const todayKey = getTodayKey();
+            const savedTemp = await AsyncStorage.getItem(todayKey);
             if (savedTemp) {
-                setBodyTemperature(Number.parseFloat(savedTemp))
+                const tempData = JSON.parse(savedTemp);
+                setBodyTemperature(tempData.temp || 72);
             }
         } catch (error) {
-            console.error("Error loading temperature:", error)
+            console.error("Error loading temperature:", error);
         }
     }
 
@@ -574,7 +628,8 @@ export default function TemperatureScreen() {
     const saveTemperature = async (celsius: number) => {
         try {
             const todayKey = getTodayKey()
-            await AsyncStorage.setItem(todayKey, celsius.toString())
+            const tempData = { temp: celsius }
+            await AsyncStorage.setItem(todayKey, JSON.stringify(tempData))
         } catch (error) {
             console.error("Error saving temperature:", error)
         }
@@ -601,7 +656,7 @@ export default function TemperatureScreen() {
 
     const getTempStatusMessage = () => {
         const temp = bodyTemperature;
-        
+
         if (temp < 36.1) return "❄️ Low body temperature - stay warm and consult a doctor";
         if (temp <= 37.2) return "✅ Normal body temperature - you're healthy!";
         if (temp <= 38.0) return "⚡ Mild fever - monitor and rest";
@@ -627,7 +682,14 @@ export default function TemperatureScreen() {
             <LinearGradient colors={["#FF6B35", "#F7931E", "#FFAB00"]} style={styles.header}>
                 <View style={styles.headerContent}>
                     <View style={styles.headerTop}>
-                        <View style={{ width: 40 }} />
+                        <View>
+                            <Appbar.BackAction
+                                onPress={() => router.back()}
+                                iconColor="#ffffff"
+                                size={24}
+                                style={{ backgroundColor: 'rgba(255, 255, 255, 0.2)' }}
+                            />
+                        </View>
                         <Text style={styles.greeting}>Body Temperature</Text>
                         <TouchableOpacity
                             style={styles.addButton}
@@ -637,9 +699,9 @@ export default function TemperatureScreen() {
                             <Ionicons name="add" size={24} color="white" />
                         </TouchableOpacity>
                     </View>
-                    <TemperatureGauge 
-                        celsius={bodyTemperature} 
-                        fahrenheit={celsiusToFahrenheit(bodyTemperature)} 
+                    <TemperatureGauge
+                        value={bodyTemperature}
+                        unit="celsius"
                     />
                     <Text style={styles.motivationalText}>{getTempStatusMessage()}</Text>
                 </View>
@@ -686,18 +748,6 @@ export default function TemperatureScreen() {
                         <View style={styles.statCard}>
                             <View style={styles.statContent}>
                                 <View style={styles.statTextContainer}>
-                                    <Text style={styles.statNumber}>{celsiusToFahrenheit(bodyTemperature).toFixed(1)}</Text>
-                                    <Text style={styles.statLabel}>°F</Text>
-                                </View>
-                                <View style={styles.statIcon}>
-                                    <Ionicons name="thermometer" size={24} color="#4CAF50" />
-                                </View>
-                            </View>
-                        </View>
-
-                        <View style={styles.statCard}>
-                            <View style={styles.statContent}>
-                                <View style={styles.statTextContainer}>
                                     <Text style={styles.statNumber}>
                                         {Math.abs(bodyTemperature - 37.0).toFixed(1)}
                                     </Text>
@@ -714,24 +764,32 @@ export default function TemperatureScreen() {
                 {/* Weekly Tracking */}
                 <View style={styles.weeklyContainer}>
                     <Text style={styles.sectionTitle}>Weekly Tracking</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.weeklyScroll}>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.weeklyScroll}
+                        contentContainerStyle={styles.weeklyScrollContent}
+                        decelerationRate="fast"
+                        snapToInterval={92}
+                        snapToAlignment="start"
+                    >
                         {weeklyTempData.map((day, index) => (
                             <TouchableOpacity
                                 key={index}
                                 style={[styles.dayCard, day.isToday && styles.todayCard]}
                                 onPress={() => loadDayDetailData(day.date)}
-                                activeOpacity={0.7}
+                                activeOpacity={0.8}
                             >
                                 <Text style={[styles.dayName, day.isToday && styles.todayText]}>{day.dayName}</Text>
                                 <Text style={[styles.dayDate, day.isToday && styles.todayText]}>{formatDate(day.date)}</Text>
                                 {day.averageTemp > 0 ? (
                                     <>
                                         <Text style={[styles.dayTemp, day.isToday && styles.todayText]}>
-                                            {day.averageTemp}°C
+                                            {day.averageTemp.toFixed(1)}°C
                                         </Text>
                                         {day.maxTemp > 0 && (
                                             <Text style={[styles.dayRange, day.isToday && styles.todayText]}>
-                                                {day.minTemp}-{day.maxTemp}
+                                                {day.minTemp.toFixed(1)}-{day.maxTemp.toFixed(1)}
                                             </Text>
                                         )}
                                     </>
@@ -742,9 +800,35 @@ export default function TemperatureScreen() {
                         ))}
                     </ScrollView>
                 </View>
+
+                {/* Health Tips Section */}
+                <View style={styles.tipsContainer}>
+                    <Text style={styles.sectionTitle}>💡 Temperature Health Tips</Text>
+                    <View style={styles.tipsCard}>
+                        <View style={styles.tipItem}>
+                            <Ionicons name="thermometer-outline" size={20} color="#FF6B35" />
+                            <Text style={styles.tipText}>Normal body temperature ranges from 36.1°C to 37.2°C</Text>
+                        </View>
+                        <View style={styles.tipItem}>
+                            <Ionicons name="time-outline" size={20} color="#2196F3" />
+                            <Text style={styles.tipText}>Body temperature is lowest in early morning and highest in late afternoon</Text>
+                        </View>
+                        <View style={styles.tipItem}>
+                            <Ionicons name="medical-outline" size={20} color="#4CAF50" />
+                            <Text style={styles.tipText}>Fever above 38°C may indicate infection - consult a doctor</Text>
+                        </View>
+                        <View style={styles.tipItem}>
+                            <Ionicons name="water-outline" size={20} color="#00BCD4" />
+                            <Text style={styles.tipText}>Stay hydrated when experiencing fever or high temperature</Text>
+                        </View>
+                        <View style={[styles.tipItem, styles.lastTipItem]}>
+                            <Ionicons name="restaurant-outline" size={20} color="#FF9800" />
+                            <Text style={styles.tipText}>Avoid heavy meals when feeling feverish - opt for light, nutritious foods</Text>
+                        </View>
+                    </View>
+                </View>
             </View>
 
-            {/* Add Temperature Modal */}
             <Modal
                 animationType="slide"
                 transparent={true}
@@ -765,24 +849,13 @@ export default function TemperatureScreen() {
                                 <Text style={styles.inputLabel}>Temperature</Text>
                                 <TextInput
                                     style={styles.input}
-                                    placeholder={temperatureUnit === 'C' ? "36.5" : "97.7"}
+                                    placeholder="36.5"
                                     value={newTemperature}
                                     onChangeText={setNewTemperature}
-                                    keyboardType="decimal-pad"
-                                    maxLength={5}
+                                    keyboardType="numeric"
+                                    maxLength={4}
                                 />
-                                <TouchableOpacity
-                                    style={[styles.unitButton, temperatureUnit === 'C' && styles.unitButtonActive]}
-                                    onPress={() => setTemperatureUnit('C')}
-                                >
-                                    <Text style={[styles.unitText, temperatureUnit === 'C' && styles.unitTextActive]}>°C</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.unitButton, temperatureUnit === 'F' && styles.unitButtonActive]}
-                                    onPress={() => setTemperatureUnit('F')}
-                                >
-                                    <Text style={[styles.unitText, temperatureUnit === 'F' && styles.unitTextActive]}>°F</Text>
-                                </TouchableOpacity>
+                                <Text style={styles.inputUnit}>°C</Text>
                             </View>
                         </View>
 
@@ -808,7 +881,6 @@ export default function TemperatureScreen() {
                 </View>
             </Modal>
 
-            {/* Day Detail Modal */}
             <Modal
                 animationType="slide"
                 transparent={true}
@@ -826,77 +898,120 @@ export default function TemperatureScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        {loadingDayDetail ? (
-                            <View style={styles.loadingContainer}>
-                                <Text style={styles.loadingText}>Loading detailed data...</Text>
-                            </View>
-                        ) : selectedDayData ? (
+                        {selectedDayData ? (
                             <ScrollView style={styles.dayDetailContent} showsVerticalScrollIndicator={false}>
-                                {/* Day Summary */}
                                 <View style={styles.daySummaryCard}>
                                     <View style={styles.summaryRow}>
                                         <View style={styles.summaryItem}>
                                             <Ionicons name="thermometer-outline" size={24} color="#FF6B35" />
                                             <Text style={styles.summaryValue}>{selectedDayData.averageTemp}°C</Text>
-                                            <Text style={styles.summaryLabel}>Average</Text>
+                                            <Text style={styles.summaryLabel}>Avg Temp</Text>
                                         </View>
                                         <View style={styles.summaryItem}>
                                             <Ionicons name="trending-up-outline" size={24} color="#FF5722" />
                                             <Text style={styles.summaryValue}>{selectedDayData.maxTemp}°C</Text>
-                                            <Text style={styles.summaryLabel}>Max</Text>
+                                            <Text style={styles.summaryLabel}>Max Temp</Text>
                                         </View>
                                         <View style={styles.summaryItem}>
-                                            <Ionicons name="medical-outline" size={24} color="#4CAF50" />
-                                            <Text style={styles.summaryValue}>{selectedDayData.category}</Text>
-                                            <Text style={styles.summaryLabel}>Category</Text>
+                                            <Ionicons name="trending-down-outline" size={24} color="#4CAF50" />
+                                            <Text style={styles.summaryValue}>{selectedDayData.minTemp}°C</Text>
+                                            <Text style={styles.summaryLabel}>Min Temp</Text>
                                         </View>
+                                    </View>
+                                    <View style={styles.categoryContainer}>
+                                        <Text style={styles.categoryLabel}>Status: </Text>
+                                        <Text style={[styles.categoryValue, {
+                                            color: selectedDayData.category === 'Normal' ? '#4CAF50' :
+                                                selectedDayData.category === 'Mild Fever' ? '#FF9800' :
+                                                    selectedDayData.category === 'Low' ? '#2196F3' : '#F44336'
+                                        }]}>
+                                            {selectedDayData.category}
+                                        </Text>
                                     </View>
                                 </View>
 
-                                {/* Hourly Breakdown */}
-                                {selectedDayData.hourlyData && selectedDayData.hourlyData.length > 0 && (
-                                    <View style={styles.hourlyBreakdownCard}>
-                                        <Text style={styles.hourlyTitle}>Hourly Temperature</Text>
-                                        <ScrollView
-                                            horizontal
-                                            showsHorizontalScrollIndicator={true}
-                                            style={styles.hourlyScrollContainer}
-                                            contentContainerStyle={styles.hourlyScrollContent}
-                                        >
-                                            <View style={styles.hourlyChart}>
-                                                {selectedDayData.hourlyData.map((hourData) => {
-                                                    const maxTemp = Math.max(...selectedDayData.hourlyData.map(h => h.temperature));
-                                                    const minTemp = Math.min(...selectedDayData.hourlyData.map(h => h.temperature));
-                                                    const range = maxTemp - minTemp;
-                                                    const barHeight = range > 0 ? ((hourData.temperature - minTemp) / range) * 100 : 0;
-                                                    const hasReading = hourData.temperature > 0;
+                                {/* Line Graph */}
+                                <View style={styles.lineGraphContainer}>
+                                    <Text style={styles.graphTitle}>24-Hour Temperature Trend</Text>
 
-                                                    return (
-                                                        <View key={hourData.hour} style={styles.hourlyBarContainer}>
-                                                            {hasReading && (
-                                                                <Text style={styles.hourSteps}>
-                                                                    {hourData.temperature.toFixed(1)}
-                                                                </Text>
-                                                            )}
-                                                            <View style={styles.hourlyBar}>
-                                                                <View style={[
-                                                                    styles.hourlyBarFill,
-                                                                    {
-                                                                        height: Math.max(barHeight, 4),
-                                                                        backgroundColor: hasReading ? '#FF6B35' : '#E0E0E0'
-                                                                    }
-                                                                ]} />
-                                                            </View>
-                                                            <Text style={styles.hourLabel}>
-                                                                {hourData.hour.toString().padStart(2, '0')}:00
-                                                            </Text>
-                                                        </View>
-                                                    );
-                                                })}
-                                            </View>
+                                    {selectedDayData.hourlyData && selectedDayData.hourlyData.length > 0 ? (
+                                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                            <LineChart
+                                                data={{
+                                                    labels: selectedDayData.hourlyData
+                                                        .filter((_, index) => index % 3 === 0) // Show every 3rd hour for cleaner x-axis
+                                                        .map(hour => `${hour.hour}h`),
+                                                    datasets: [{
+                                                        data: selectedDayData.hourlyData.map(hour => {
+                                                            // Only show actual readings, use null for missing data
+                                                            return hour.temperature > 0 ? hour.temperature : null;
+                                                        }).map(temp => temp !== null ? temp : 0), // Chart library needs numbers, but we'll handle display
+                                                        color: (opacity = 1) => `rgba(255, 107, 53, ${opacity})`,
+                                                        strokeWidth: 2,
+                                                        withDots: true,
+                                                    }],
+                                                }}
+                                                width={Math.max(width - 60, selectedDayData.hourlyData.length * 15)} // Responsive width for scrolling
+                                                height={220}
+                                                yAxisLabel=""
+                                                yAxisSuffix="°C"
+                                                yAxisInterval={1}
+                                                chartConfig={{
+                                                    backgroundColor: "#ffffff",
+                                                    backgroundGradientFrom: "#ffffff",
+                                                    backgroundGradientTo: "#f8f9fa",
+                                                    decimalPlaces: 1,
+                                                    color: (opacity = 1) => `rgba(255, 107, 53, ${opacity})`,
+                                                    labelColor: (opacity = 1) => `rgba(102, 102, 102, ${opacity})`,
+                                                    style: {
+                                                        borderRadius: 16,
+                                                    },
+                                                    propsForDots: {
+                                                        r: "4",
+                                                        strokeWidth: "2",
+                                                        stroke: "#FF6B35",
+                                                        fill: "#ffffff"
+                                                    },
+                                                    propsForBackgroundLines: {
+                                                        strokeDasharray: "5,5",
+                                                        stroke: "#e0e0e0",
+                                                        strokeWidth: 1
+                                                    },
+                                                    fillShadowGradient: "#FF6B35",
+                                                    fillShadowGradientOpacity: 0.1,
+                                                }}
+                                                // No bezier for accurate medical data - straight lines only between actual readings
+                                                style={{
+                                                    marginVertical: 8,
+                                                    borderRadius: 16,
+                                                    elevation: 3,
+                                                    shadowColor: "#000",
+                                                    shadowOffset: { width: 0, height: 2 },
+                                                    shadowOpacity: 0.1,
+                                                    shadowRadius: 8,
+                                                }}
+                                                onDataPointClick={(data) => {
+                                                    const hourData = selectedDayData.hourlyData[data.index];
+                                                    if (hourData) {
+                                                        const message = hourData.temperature > 0
+                                                            ? `Temperature: ${hourData.temperature.toFixed(1)}°C`
+                                                            : 'No temperature data recorded';
+                                                        Alert.alert(
+                                                            `${hourData.hour}:00`,
+                                                            message,
+                                                            [{ text: "OK" }]
+                                                        );
+                                                    }
+                                                }}
+                                            />
                                         </ScrollView>
-                                    </View>
-                                )}
+                                    ) : (
+                                        <View style={styles.noDataContainer}>
+                                            <Ionicons name="thermometer-outline" size={48} color="#E0E0E0" />
+                                            <Text style={styles.noDataText}>No temperature data available</Text>
+                                        </View>
+                                    )}
+                                </View>
                             </ScrollView>
                         ) : (
                             <View style={styles.errorContainer}>
@@ -917,10 +1032,15 @@ const styles = StyleSheet.create({
     },
     header: {
         paddingTop: 40,
-        paddingBottom: 15,
+        paddingBottom: 20,
         borderBottomLeftRadius: 30,
         borderBottomRightRadius: 30,
         position: "relative",
+        shadowColor: "#FF6B35",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        elevation: 8,
     },
     headerContent: {
         alignItems: "center",
@@ -936,12 +1056,17 @@ const styles = StyleSheet.create({
         position: "relative",
     },
     addButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: "rgba(255, 255, 255, 0.2)",
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: "rgba(255, 255, 255, 0.25)",
         justifyContent: "center",
         alignItems: "center",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 3,
     },
     greeting: {
         fontSize: 24,
@@ -949,18 +1074,25 @@ const styles = StyleSheet.create({
         color: "white",
         textAlign: "center",
         flex: 1,
+        textShadowColor: "rgba(0, 0, 0, 0.3)",
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 2,
     },
     motivationalText: {
         fontSize: 16,
-        color: "rgba(255, 255, 255, 0.9)",
+        color: "rgba(255, 255, 255, 0.95)",
         marginVertical: 0,
-        marginTop: -20,
+        marginTop: 10,
         textAlign: "center",
+        textShadowColor: "rgba(0, 0, 0, 0.2)",
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 2,
+        paddingHorizontal: 20,
     },
     content: {
         flex: 1,
         marginVertical: 0,
-        paddingTop: 20,
+        paddingTop: 25,
     },
     tempContainer: {
         flexDirection: "row",
@@ -1061,15 +1193,17 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         backgroundColor: "white",
-        padding: 16,
+        padding: 18,
         marginHorizontal: 20,
-        marginBottom: 20,
-        borderRadius: 16,
+        marginBottom: 25,
+        borderRadius: 20,
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
         elevation: 3,
+        borderWidth: 1,
+        borderColor: "rgba(255, 107, 53, 0.1)",
     },
     infoContent: {
         flex: 1,
@@ -1079,36 +1213,42 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: "600",
         color: "#333",
-        marginBottom: 4,
+        marginBottom: 6,
     },
     infoText: {
         fontSize: 14,
         color: "#666",
-        lineHeight: 20,
+        lineHeight: 22,
     },
     actionButton: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        borderRadius: 8,
-        gap: 6,
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        gap: 8,
+        shadowColor: "#FF6B35",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 2,
     },
     buttonText: {
         color: "white",
-        fontSize: 16,
+        fontSize: 14,
         fontWeight: "600",
     },
     statsContainer: {
         paddingHorizontal: 20,
-        marginBottom: 30,
+        marginBottom: 25,
     },
     sectionTitle: {
         fontSize: 20,
         fontWeight: "700",
         color: "#333",
-        marginBottom: 16,
+        marginBottom: 18,
+        letterSpacing: 0.3,
     },
     statsGrid: {
         flexDirection: "row",
@@ -1117,13 +1257,15 @@ const styles = StyleSheet.create({
     statCard: {
         flex: 1,
         backgroundColor: "white",
-        borderRadius: 16,
-        padding: 16,
+        borderRadius: 20,
+        padding: 18,
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
         elevation: 3,
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.04)",
     },
     statContent: {
         flexDirection: "row",
@@ -1134,43 +1276,48 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     statNumber: {
-        fontSize: 20,
+        fontSize: 22,
         fontWeight: "700",
         color: "#333",
     },
     statLabel: {
         fontSize: 12,
         color: "#666",
-        marginTop: 2,
+        marginTop: 4,
+        fontWeight: "500",
     },
     statIcon: {
-        width: 32,
-        height: 32,
+        width: 36,
+        height: 36,
         justifyContent: "center",
         alignItems: "center",
+        backgroundColor: "rgba(255, 107, 53, 0.1)",
+        borderRadius: 18,
     },
     weeklyContainer: {
         paddingHorizontal: 20,
-        marginBottom: 30,
+        marginBottom: 20,
     },
     weeklyScroll: {
         marginTop: 10,
     },
+    weeklyScrollContent: {
+        paddingHorizontal: 4,
+    },
     dayCard: {
         backgroundColor: "white",
-        borderRadius: 12,
+        borderRadius: 16,
         padding: 16,
         marginRight: 12,
-        minWidth: 80,
+        minWidth: 50,
         alignItems: "center",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 2,
+        elevation: 1,
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.04)",
     },
     todayCard: {
         backgroundColor: "#FF6B35",
+        elevation: 2,
     },
     dayName: {
         fontSize: 12,
@@ -1184,7 +1331,7 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     dayTemp: {
-        fontSize: 14,
+        fontSize: 16,
         fontWeight: "700",
         color: "#333",
         marginBottom: 2,
@@ -1200,6 +1347,44 @@ const styles = StyleSheet.create({
     },
     todayText: {
         color: "white",
+    },
+    // Tips Section Styles
+    tipsContainer: {
+        paddingHorizontal: 20,
+        marginBottom: 30,
+    },
+    tipsCard: {
+        backgroundColor: "white",
+        borderRadius: 20,
+        padding: 20,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+        elevation: 3,
+        borderWidth: 1,
+        borderColor: "rgba(255, 107, 53, 0.1)",
+    },
+    tipItem: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        marginBottom: 16,
+        paddingBottom: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: "rgba(0,0,0,0.06)",
+    },
+    lastTipItem: {
+        marginBottom: 0,
+        paddingBottom: 0,
+        borderBottomWidth: 0,
+    },
+    tipText: {
+        flex: 1,
+        fontSize: 14,
+        color: "#555",
+        lineHeight: 20,
+        marginLeft: 12,
+        fontWeight: "400",
     },
     modalOverlay: {
         flex: 1,
@@ -1219,9 +1404,10 @@ const styles = StyleSheet.create({
         backgroundColor: "white",
         borderRadius: 20,
         padding: 20,
-        margin: 20,
-        width: width * 0.9,
-        maxHeight: height * 0.8,
+        margin: 10,
+        width: width * 0.95,
+        height: height * 0.65,
+        maxHeight: height * 0.95,
     },
     modalHeader: {
         flexDirection: "row",
@@ -1413,5 +1599,55 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: "#999",
         textAlign: "center",
+    },
+    lineGraphContainer: {
+        marginTop: 16,
+        borderRadius: 16,
+        overflow: "hidden",
+        backgroundColor: "white",
+        padding: 16,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 3,
+    },
+    graphTitle: {
+        fontSize: 16,
+        fontWeight: "600",
+        color: "#333",
+        marginBottom: 12,
+    },
+    noDataContainer: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        paddingVertical: 40,
+    },
+    noDataText: {
+        fontSize: 16,
+        color: "#999",
+        textAlign: "center",
+    },
+    // Category styles  
+    categoryContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        marginTop: 10,
+    },
+    categoryLabel: {
+        fontSize: 16,
+        color: "#666",
+        fontWeight: "500",
+    },
+    categoryValue: {
+        fontSize: 16,
+        fontWeight: "700",
+    },
+    inputUnit: {
+        fontSize: 14,
+        color: "#666",
+        width: 40,
     },
 })

@@ -20,7 +20,6 @@ import {
     SdkAvailabilityStatus,
     RecordingMethod
 } from "react-native-health-connect"
-import { LineChart } from "react-native-chart-kit"
 import {
     getDateRange,
     formatHealthValue,
@@ -30,7 +29,7 @@ import {
     getDeviceMetadata,
     openHealthConnectSettingsScreen
 } from "@/utils/healthUtils"
-import { Link, router } from "expo-router"
+import { router } from "expo-router"
 
 const screenWidth = Dimensions.get("window").width
 
@@ -45,72 +44,113 @@ interface HealthData {
     hydration: number
 }
 
-interface StatsCardProps {
+interface HealthCardProps {
     title: string
     value: string
     unit: string
     icon: string
     color: string
-    onAdd?: () => void
-    canAdd?: boolean
-    progress?: number
-    target?: number
+    onPress?: () => void
     trend?: "up" | "down" | "stable"
 }
 
-const StatsCard: React.FC<StatsCardProps> = ({
+interface BMICardProps {
+    weight: number
+    height: number
+    onPress?: () => void
+}
+
+const HealthCard: React.FC<HealthCardProps> = ({
     title,
     value,
     unit,
     icon,
     color,
-    onAdd,
-    canAdd,
-    progress,
-    target,
-    trend,
-}) => (
-    <View style={[styles.card, { borderLeftColor: color }]}>
-        <View style={styles.cardHeader}>
-            <Text style={styles.cardIcon}>{icon}</Text>
-            <Text style={styles.cardTitle}>{title}</Text>
-            {canAdd && onAdd && (
-                <TouchableOpacity style={[styles.addButton, { backgroundColor: color }]} onPress={onAdd}>
-                    <Text style={styles.addButtonText}>+</Text>
-                </TouchableOpacity>
-            )}
-        </View>
-        <Text style={[styles.cardValue, { color }]}>{value}</Text>
-        <Text style={styles.cardUnit}>{unit}</Text>
-
-        {/* Progress Bar */}
-        {progress !== undefined && (
-            <View style={styles.progressContainer}>
-                <View style={styles.progressBar}>
-                    <View style={[styles.progressFill, { width: `${Math.min(progress, 100)}%`, backgroundColor: color }]} />
-                </View>
-                <Text style={styles.progressText}>{Math.round(progress)}%</Text>
+    onPress
+}) => {
+    return (
+        <TouchableOpacity
+            style={[styles.healthCard, { backgroundColor: color }]}
+            onPress={onPress}
+            activeOpacity={0.8}
+        >
+            <View style={styles.leftSection}>
+                <Text style={styles.cardIcon}>{icon}</Text>
+                <Text style={styles.healthCardTitle}>{title}</Text>
             </View>
-        )}
-
-        {/* Trend Indicator */}
-        {trend && (
-            <View style={styles.trendContainer}>
-                <Text
-                    style={[
-                        styles.trendIcon,
-                        {
-                            color: trend === "up" ? "#4CAF50" : trend === "down" ? "#F44336" : "#666",
-                        },
-                    ]}
-                >
-                    {trend === "up" ? "↗️" : trend === "down" ? "↘️" : "➡️"}
+            <View style={styles.rightSection}>
+                <Text style={styles.healthCardValue}>{value}
+                    <Text style={{ fontSize: 16, marginLeft: 5 }}>
+                        {unit}
+                        <Text>
+                            {">"}
+                        </Text>
+                    </Text>
                 </Text>
-                <Text style={styles.trendText}>{trend === "up" ? "Improving" : trend === "down" ? "Declining" : "Stable"}</Text>
             </View>
-        )}
-    </View>
-)
+        </TouchableOpacity>
+    );
+}
+
+const BMICard: React.FC<BMICardProps> = ({ weight, height }) => {
+    const calculateBMI = () => {
+        if (height > 0 && weight > 0) {
+            const heightInMeters = height / 100;
+            const bmi = weight / (heightInMeters * heightInMeters);
+            return bmi;
+        }
+        return 0;
+    };
+
+    const getBMICategory = (bmi: number) => {
+        if (bmi === 0) return 'No Data';
+        if (bmi < 18.5) return 'Underweight';
+        if (bmi < 25) return 'Normal';
+        if (bmi < 30) return 'Overweight';
+        return 'Obese';
+    };
+
+    const getBMIColor = (bmi: number) => {
+        if (bmi === 0) return '#95A5A6';
+        if (bmi < 18.5) return '#3498DB';
+        if (bmi < 25) return '#2ECC71';
+        if (bmi < 30) return '#F39C12';
+        return '#E74C3C';
+    };
+
+    const bmi = calculateBMI();
+    const bmiCategory = getBMICategory(bmi);
+    const bmiColor = getBMIColor(bmi);
+
+    return (
+        <TouchableOpacity
+            style={[styles.bmiCard, { backgroundColor: '#FFFFFF' }]}
+            activeOpacity={0.8}
+        >
+            <View style={styles.bmiContent}>
+                <View style={styles.bmiHeader}>
+                    <Text style={styles.bmiTitle}>BMI Index</Text>
+                </View>
+                <View style={styles.bmiBody}>
+                    <View style={styles.bmiGaugeContainer}>
+
+                        <View style={[styles.bmiGauge, { borderColor: bmiColor }]}>
+                            <Text style={[styles.bmiValue, { color: bmiColor }]}>
+                                {bmi > 0 ? bmi.toFixed(1) : '0.0'}
+                            </Text>
+                        </View>
+                    </View>
+                    <View style={styles.bmiInfo}>
+                        <Text style={[styles.bmiCategory, { color: bmiColor }]}>{bmiCategory}</Text>
+                        <Text style={styles.bmiDetails}>
+                            Weight: {weight}kg{'\n'}Height: {height}cm
+                        </Text>
+                    </View>
+                </View>
+            </View>
+        </TouchableOpacity>
+    );
+};
 
 const HealthDashboard: React.FC = () => {
     const [healthData, setHealthData] = useState<HealthData>({
@@ -835,194 +875,82 @@ const HealthDashboard: React.FC = () => {
                     {/* Modern Header */}
                     <View style={styles.header}>
                         <View style={styles.headerContent}>
-                            <Text style={styles.title}>Health Dashboard</Text>
-                            <Text style={styles.subtitle}>Your wellness journey</Text>
+                            <Text style={styles.greeting}>Health Dashboard</Text>
+                            <Text style={styles.subtitle}>Here's your health summary</Text>
                         </View>
-                        {!hasEssentialPermissions && (
-                            <TouchableOpacity style={styles.permissionPrompt} onPress={retryPermissions}>
-                                <Text style={styles.permissionPromptText}>Grant Permissions</Text>
-                            </TouchableOpacity>
-                        )}
                     </View>
 
-                    {/* Health Overview Cards */}
-                    <View style={styles.statsContainer}>
-                        <Text style={styles.sectionTitle}>Today's Overview</Text>
+                    {/* Health Cards */}
+                    <View style={styles.cardsContainer}>
+                        {/* Steps Card */}
+                        <HealthCard
+                            title="Steps"
+                            value={formatHealthValue(healthData.steps, "steps")}
+                            unit=""
+                            icon="🦶"
+                            color="#B8E6B8"
+                            onPress={() => router.push("/steps")}
+                        />
 
-                        <View style={styles.row}>
-                            <StatsCard
-                                title="Steps"
-                                value={formatHealthValue(healthData.steps, "steps")}
-                                unit="steps"
-                                icon="👟"
-                                color="#4A90E2"
-                                progress={(healthData.steps / 10000) * 100}
-                                target={10000}
-                                trend={healthData.steps > 8000 ? "up" : "stable"}
-                            />
-                            <StatsCard
-                                title="Heart Rate"
-                                value={formatHealthValue(healthData.heartRate, "heartRate")}
-                                unit="bpm"
-                                icon="❤️"
-                                color="#F5A623"
-                                canAdd
-                                onAdd={() => openInputModal("heartRate")}
-                                trend="stable"
-                            />
-                        </View>
-                        <View style={styles.quickNavContainer}>
-                            <TouchableOpacity style={styles.quickNavButton}>
-                                <Link href="/bloodpressure" asChild>
-                                    <Text style={styles.quickNavText}>BP PAGE</Text>
-                                </Link>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.quickNavButton}>
-                                <Link href="/heartrate" asChild>
-                                    <Text style={styles.quickNavText}>HEART PAGE</Text>
-                                </Link>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.quickNavButton}>
-                                <Link href="/temperature" asChild>
-                                    <Text style={styles.quickNavText}>TEMPERATURE PAGE</Text>
-                                </Link>
-                            </TouchableOpacity>
-                        </View>
+                        {/* Hydration Card */}
+                        <HealthCard
+                            title="Hydration"
+                            value={(healthData.hydration / 1000).toFixed(1)}
+                            unit="L"
+                            icon="🚰"
+                            color="#E6D7FF"
+                            onPress={() => router.push("/water")}
+                        />
 
-                        <View style={styles.row}>
-                            <StatsCard
-                                title="Weight"
-                                value={formatHealthValue(healthData.weight, "weight")}
-                                unit="kg"
-                                icon="⚖️"
-                                color="#7ED321"
-                                canAdd
-                                onAdd={() => openInputModal("weight")}
-                                trend="stable"
-                            />
-                            <StatsCard
-                                title="Hydration"
-                                value={formatHealthValue(healthData.hydration, "hydration")}
-                                unit="ml"
-                                icon="💧"
-                                color="#50E3C2"
-                                progress={(healthData.hydration / 2000) * 100}
-                                target={2000}
-                                canAdd
-                                onAdd={() => openInputModal("hydration")}
-                                trend={healthData.hydration > 1500 ? "up" : "down"}
-                            />
-                        </View>
+                        {/* Heart Rate Card */}
+                        <HealthCard
+                            title="Heart Rate"
+                            value={formatHealthValue(healthData.heartRate, "heartRate")}
+                            unit="bpm"
+                            icon="❤️"
+                            color="#FFD7D7"
+                            onPress={() => router.push("/heartrate")}
+                        />
 
-                        <View style={styles.row}>
-                            <StatsCard
-                                title="Distance"
-                                value={formatHealthValue(healthData.distance, "distance")}
-                                unit="km"
-                                icon="🏃"
-                                color="#BD10E0"
-                                trend="up"
-                            />
-                            <StatsCard
-                                title="Temperature"
-                                value={formatHealthValue(healthData.bodyTemp, "bodyTemp")}
-                                unit="°C"
-                                icon="🌡️"
-                                color="#FF6B6B"
-                                canAdd
-                                onAdd={() => openInputModal("bodyTemp")}
-                                trend="stable"
-                            />
-                        </View>
+                        {/* Body Temperature Card */}
+                        <HealthCard
+                            title="Body Temperature"
+                            value={formatHealthValue(healthData.bodyTemp, "bodyTemp")}
+                            unit="°c"
+                            icon="🌡️"
+                            color="#FFE4B8"
+                            onPress={() => router.push("/temperature")}
+                        />
+                        <HealthCard
+                            title="Prescription"
+                            value={formatHealthValue(healthData.bodyTemp, "bodyTemp")}
+                            unit="°c"
+                            icon="🌡️"
+                            color="#FFE4B8"
+                            onPress={() => router.push("/prescription")}
+                        />
 
-                        {healthData.bloodPressure && (
-                            <View style={styles.row}>
-                                <StatsCard
-                                    title="Blood Pressure"
-                                    value={`${healthData.bloodPressure.systolic}/${healthData.bloodPressure.diastolic}`}
-                                    unit="mmHg"
-                                    icon="🩺"
-                                    color="#FF9500"
-                                    canAdd
-                                    onAdd={() => openInputModal("bloodPressure")}
-                                    trend="stable"
-                                />
-                                <StatsCard
-                                    title="Height"
-                                    value={formatHealthValue(healthData.height, "height")}
-                                    unit="cm"
-                                    icon="📏"
-                                    color="#5856D6"
-                                    canAdd
-                                    onAdd={() => openInputModal("height")}
-                                />
-                            </View>
-                        )}
+                        {/* BMI Card */}
+                        <BMICard
+                            weight={healthData.weight}
+                            height={healthData.height}
+                        />
                     </View>
 
-                    {/* Charts Section */}
-                    <View style={styles.statsContainer}>
-                        <Text style={styles.sectionTitle}>Weekly Trends</Text>
-
-                        {chartsLoading ? (
-                            <View style={styles.loadingContainer}>
-                                <Text style={styles.loadingText}>Loading charts...</Text>
-                            </View>
-                        ) : (
-                            <>
-                                {aggregatedChartData.steps.labels.length > 0 && (
-                                    <View style={styles.chartContainer}>
-                                        <Text style={styles.chartTitle}>Steps Progress</Text>
-                                        <LineChart
-                                            data={aggregatedChartData.steps}
-                                            width={screenWidth - 50}
-                                            height={200}
-                                            chartConfig={{
-                                                ...chartConfig,
-                                                color: (opacity = 1) => `rgba(74, 144, 226, ${opacity})`,
-                                            }}
-                                            style={styles.chart}
-                                        />
-                                    </View>
-                                )}
-
-                                {aggregatedChartData.heartRate.labels.length > 0 && (
-                                    <View style={styles.chartContainer}>
-                                        <Text style={styles.chartTitle}>Heart Rate Trends</Text>
-                                        <LineChart
-                                            data={aggregatedChartData.heartRate}
-                                            width={screenWidth - 50}
-                                            height={200}
-                                            chartConfig={{
-                                                ...chartConfig,
-                                                color: (opacity = 1) => `rgba(245, 166, 35, ${opacity})`,
-                                            }}
-                                            style={styles.chart}
-                                        />
-                                    </View>
-                                )}
-
-                                {aggregatedChartData.hydration.labels.length > 0 && (
-                                    <View style={styles.chartContainer}>
-                                        <Text style={styles.chartTitle}>Hydration Levels</Text>
-                                        <LineChart
-                                            data={aggregatedChartData.hydration}
-                                            width={screenWidth - 50}
-                                            height={200}
-                                            chartConfig={{
-                                                ...chartConfig,
-                                                color: (opacity = 1) => `rgba(80, 227, 194, ${opacity})`,
-                                            }}
-                                            style={styles.chart}
-                                        />
-                                    </View>
-                                )}
-                            </>
-                        )}
-                    </View>
-
-                    <View style={styles.footer}>
-                        <Text style={styles.footerText}>Health data synced with Health Connect</Text>
+                    {/* Quick Actions */}
+                    <View style={styles.quickActionsContainer}>
+                        <TouchableOpacity
+                            style={styles.quickActionButton}
+                            onPress={() => openInputModal("weight")}
+                        >
+                            <Text style={styles.quickActionText}>⚖️ Add Weight</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.quickActionButton}
+                            onPress={() => openInputModal("height")}
+                        >
+                            <Text style={styles.quickActionText}>📏 Add Height</Text>
+                        </TouchableOpacity>
                     </View>
 
                     {/* Input Modal */}
@@ -1233,8 +1161,8 @@ const styles = StyleSheet.create({
         marginBottom: 12,
     },
     cardIcon: {
-        fontSize: 24,
-        marginRight: 12,
+        fontSize: 20,
+        marginRight: 8,
     },
     cardTitle: {
         fontSize: 14,
@@ -1460,6 +1388,174 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         fontSize: 16,
         letterSpacing: 1,
+    },
+    // New styles for redesigned dashboard
+    greeting: {
+        fontSize: 28,
+        fontWeight: "700",
+        color: "white",
+        marginBottom: 4,
+    },
+    profileButton: {
+        backgroundColor: "rgba(255, 255, 255, 0.2)",
+        borderRadius: 20,
+        width: 40,
+        height: 40,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    profileIcon: {
+        fontSize: 20,
+        color: "white",
+    },
+    cardsContainer: {
+        padding: 20,
+        gap: 16,
+    },
+    healthCard: {
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 8,
+        minHeight: 80,
+        overflow: "hidden",
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    leftSection: {
+        flexDirection: "row",
+        alignItems: "center",
+        flex: 1,
+    },
+    rightSection: {
+        alignItems: "flex-end",
+        justifyContent: "center",
+    },
+    healthCardHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 12,
+    },
+    cardArrow: {
+        fontSize: 24,
+        color: "#333",
+        fontWeight: "bold",
+    },
+    healthCardTitle: {
+        fontSize: 16,
+        color: "#333",
+        fontWeight: "600",
+        marginLeft: 12,
+    },
+    healthCardValue: {
+        fontSize: 28,
+        fontWeight: "700",
+        color: "#333",
+        lineHeight: 32,
+    },
+    healthCardUnit: {
+        fontSize: 14,
+        color: "#666",
+        fontWeight: "500",
+        marginTop: 2,
+    },
+    bmiCard: {
+        borderRadius: 16,
+        padding: 20,
+        marginBottom: 8,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    bmiContent: {
+        flex: 1,
+    },
+    bmiHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 16,
+    },
+    bmiTitle: {
+        fontSize: 16,
+        color: "#333",
+        fontWeight: "600",
+    },
+    bmiBody: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 20,
+    },
+    bmiGaugeContainer: {
+        position: "relative",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    bmiGauge: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        borderWidth: 6,
+        borderColor: "#E2E8F0",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#F8F9FA",
+    },
+    bmiGaugeCenter: {
+        position: "absolute",
+        alignItems: "center",
+        justifyContent: "center",
+        top: 35,
+        left: 35,
+        right: 35,
+        bottom: 35,
+    },
+    bmiValue: {
+        fontSize: 18,
+        fontWeight: "700",
+    },
+    bmiInfo: {
+        flex: 1,
+    },
+    bmiCategory: {
+        fontSize: 16,
+        fontWeight: "600",
+        marginBottom: 8,
+    },
+    bmiDetails: {
+        fontSize: 14,
+        color: "#666",
+        lineHeight: 20,
+    },
+    quickActionsContainer: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        paddingHorizontal: 20,
+        paddingBottom: 20,
+        gap: 12,
+    },
+    quickActionButton: {
+        flex: 1,
+        backgroundColor: "#F8F9FA",
+        borderRadius: 12,
+        paddingVertical: 16,
+        paddingHorizontal: 20,
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: "#E2E8F0",
+    },
+    quickActionText: {
+        fontSize: 16,
+        fontWeight: "600",
+        color: "#333",
     },
 })
 
