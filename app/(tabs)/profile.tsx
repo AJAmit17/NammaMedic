@@ -12,19 +12,16 @@ import {
     Share,
     Linking,
     Clipboard,
+    ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import QRCode from 'react-native-qrcode-svg';
-import { WeeklyStepData } from './steps';
+import { WeeklyStepData } from '@/app/steps';
 import { useCallback } from 'react';
-import {
-    initialize,
-    getSdkStatus,
-    readRecords
-} from 'react-native-health-connect';
+import { useHealthData, getWeekRange } from '@/hooks/health';
 const { width } = Dimensions.get('window');
 
 
@@ -161,6 +158,7 @@ export default function ProfileScreen() {
     const [isAccountRegistered, setIsAccountRegistered] = useState(false);
     const [accessExpiry, setAccessExpiry] = useState<number | null>(null);
 
+    // Health data states
     const [weeklySteps, setWeeklySteps] = useState<WeeklyStepData[]>([]);
     const [weeklyHydration, setWeeklyHydration] = useState<{
         date: string;
@@ -168,89 +166,101 @@ export default function ProfileScreen() {
         intake: number;
         isToday: boolean;
     }[]>([]);
+    const [healthSummary, setHealthSummary] = useState<{
+        totalSteps: number;
+        avgHeartRate: number;
+        totalHydration: number;
+        avgTemperature: number;
+    } | null>(null);
+    const [isRegistering, setIsRegistering] = useState(false);
+    const [isSharing, setIsSharing] = useState(false);
+    const [isRevoking, setIsRevoking] = useState(false);
+
+    // Use health data hook
+    const {
+        hasPermissions,
+        isLoading: healthLoading,
+        loadWeeklyData,
+        requestPermissions,
+    } = useHealthData();
 
 
 
     useEffect(() => {
         loadProfile();
-        initializeAndFetchWeeklyData();
+        initializeHealthData();
     }, []);
 
-    const initializeAndFetchWeeklyData = useCallback(async () => {
+    const initializeHealthData = useCallback(async () => {
         try {
-            const status = await getSdkStatus();
-            if (status !== 0) return;
-            const initialized = await initialize();
-            if (!initialized) return;
-
-            // Fetch weekly steps data
-            const stepsData = await readRecords('Steps', {
-                timeRangeFilter: {
-                    operator: 'between',
-                    startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-                    endTime: new Date().toISOString(),
-                },
-            });
-            const today = new Date();
-            const weeklyStepsArray = [];
-            for (let i = 6; i >= 0; i--) {
-                const date = new Date(today);
-                date.setDate(date.getDate() - i);
-                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
-                const isToday = i === 0;
-                const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-                const dayStart = new Date(date);
-                dayStart.setHours(0, 0, 0, 0);
-                const dayEnd = new Date(date);
-                dayEnd.setHours(23, 59, 59, 999);
-                const daySteps = (stepsData.records || stepsData)?.filter((record) => {
-                    const recordTime = new Date(record.startTime);
-                    return recordTime >= dayStart && recordTime <= dayEnd;
-                }).reduce((sum, record) => sum + (record.count || 0), 0);
-                weeklyStepsArray.push({
-                    date: dateString,
-                    dayName,
-                    steps: daySteps,
-                    isToday,
-                });
+            if (!hasPermissions) {
+                const granted = await requestPermissions();
+                if (!granted) {
+                    console.log('Health permissions not granted');
+                    return;
+                }
             }
-            setWeeklySteps(weeklyStepsArray);
 
-            // Fetch weekly hydration data
-            const hydrationData = await readRecords('Hydration', {
-                timeRangeFilter: {
-                    operator: 'between',
-                    startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-                    endTime: new Date().toISOString(),
-                },
-            });
-            const weeklyHydrationArray = [];
-            for (let i = 6; i >= 0; i--) {
-                const date = new Date(today);
-                date.setDate(date.getDate() - i);
-                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
-                const isToday = i === 0;
-                const dateString = date.toISOString().split('T')[0];
-                const dayStart = new Date(date);
-                dayStart.setHours(0, 0, 0, 0);
-                const dayEnd = new Date(date);
-                dayEnd.setHours(23, 59, 59, 999);
-                const dayHydration = (hydrationData.records || hydrationData)?.filter((record) => {
-                    const recordDate = new Date(record.startTime);
-                    return recordDate >= dayStart && recordDate <= dayEnd;
-                }).reduce((sum, record) => sum + (record.volume?.inLiters || 0), 0);
-                weeklyHydrationArray.push({
-                    date: dateString,
-                    dayName,
-                    intake: Math.round(dayHydration * 1000), // ml
-                    isToday,
+            // Load weekly health data using our health provider
+            const weekRange = getWeekRange(0); // Current week
+            const weeklyHealthData = await loadWeeklyData(weekRange);
+            
+            if (weeklyHealthData) {
+                // Convert to the format expected by existing UI
+                const weeklyStepsArray: WeeklyStepData[] = weeklyHealthData.steps.map((dayData, index) => {
+                    const date = new Date();
+                    date.setDate(date.getDate() - (6 - index));
+                    return {
+                        date: dayData.date,
+                        dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()],
+                        steps: dayData.value,
+                        isToday: index === 6,
+                    };
                 });
+                setWeeklySteps(weeklyStepsArray);
+
+                // Convert hydration data
+                const weeklyHydrationArray = weeklyHealthData.water.map((dayData, index) => {
+                    const date = new Date();
+                    date.setDate(date.getDate() - (6 - index));
+                    return {
+                        date: dayData.date,
+                        dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()],
+                        intake: Math.round(dayData.value * 1000), // Convert L to ml
+                        isToday: index === 6,
+                    };
+                });
+                setWeeklyHydration(weeklyHydrationArray);
+
+                // Calculate and set health summary
+                const totalSteps = weeklyHealthData.steps.reduce((sum, day) => sum + day.value, 0);
+                
+                // Calculate average heart rate only from days with actual data
+                const validHeartRateDays = weeklyHealthData.heartRate.filter(day => day.value != null && day.value > 0);
+                const avgHeartRate = validHeartRateDays.length > 0 
+                    ? validHeartRateDays.reduce((sum, day) => sum + day.value, 0) / validHeartRateDays.length 
+                    : 0;
+                    
+                const totalHydration = weeklyHealthData.water.reduce((sum, day) => sum + day.value, 0);
+                
+                // Calculate average temperature only from days with actual data
+                const validTemperatureDays = weeklyHealthData.temperature.filter(day => day.value != null && day.value > 0);
+                const avgTemperature = validTemperatureDays.length > 0 
+                    ? validTemperatureDays.reduce((sum, day) => sum + day.value, 0) / validTemperatureDays.length 
+                    : 0;
+
+                const summary = {
+                    totalSteps: Math.round(totalSteps),
+                    avgHeartRate: Math.round(avgHeartRate * 10) / 10,
+                    totalHydration: Math.round(totalHydration * 100) / 100,
+                    avgTemperature: Math.round(avgTemperature * 10) / 10,
+                };
+                setHealthSummary(summary);
             }
-            setWeeklyHydration(weeklyHydrationArray);
         } catch (error) {
-            console.error('Error initializing or fetching Health Connect data:', error);
+            console.error('Error initializing health data:', error);
         }
-    }, []);
+    }, [hasPermissions, requestPermissions, loadWeeklyData]);
 
     // Check for expired access every minute
     useEffect(() => {
@@ -296,10 +306,48 @@ export default function ProfileScreen() {
 
     const sendProfileToServer = async (shareId: string, expiry: number) => {
         try {
+            // Generate comprehensive health report
+            const weekRange = getWeekRange(0); // Current week
+            const weeklyHealthData = await loadWeeklyData(weekRange);
+            
+            // Calculate health summary statistics
+            let healthSummary = null;
+            if (weeklyHealthData) {
+                const totalSteps = weeklyHealthData.steps.reduce((sum, day) => sum + day.value, 0);
+                
+                // Calculate average heart rate only from days with actual data
+                const validHeartRateDays = weeklyHealthData.heartRate.filter(day => day.value != null && day.value > 0);
+                console.log('Heart rate data for profile sharing:', weeklyHealthData.heartRate);
+                console.log('Valid heart rate days:', validHeartRateDays);
+                const avgHeartRate = validHeartRateDays.length > 0 
+                    ? validHeartRateDays.reduce((sum, day) => sum + day.value, 0) / validHeartRateDays.length 
+                    : 0;
+                    
+                const totalHydration = weeklyHealthData.water.reduce((sum, day) => sum + day.value, 0);
+                
+                // Calculate average temperature only from days with actual data
+                const validTemperatureDays = weeklyHealthData.temperature.filter(day => day.value != null && day.value > 0);
+                const avgTemperature = validTemperatureDays.length > 0 
+                    ? validTemperatureDays.reduce((sum, day) => sum + day.value, 0) / validTemperatureDays.length 
+                    : 0;
+
+                healthSummary = {
+                    totalSteps: Math.round(totalSteps),
+                    avgHeartRate: Math.round(avgHeartRate * 10) / 10,
+                    totalHydration: Math.round(totalHydration * 100) / 100,
+                    avgTemperature: Math.round(avgTemperature * 10) / 10,
+                };
+
+                // Update state for UI display
+                setHealthSummary(healthSummary);
+            }
+
             const data = {
                 ...profile,
                 weeklySteps,
                 weeklyHydration,
+                weeklyHealthData,
+                healthSummary,
                 expiry,
             };
 
@@ -319,16 +367,16 @@ export default function ProfileScreen() {
 
             console.log('Sending profile to server:', finalPayload);
 
-            // const res = await fetch('https://namma-medic.vercel.app/api/webhook', {
-            //     method: 'POST',
-            //     headers: {
-            //         'Content-Type': 'application/json',
-            //     },
-            //     body: JSON.stringify(finalPayload),
-            // });
+            const res = await fetch('https://namma-medic.vercel.app/api/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(finalPayload),
+            });
 
-            // const text = await res.text();
-            // console.log('Response:', res.status, text);
+            const text = await res.text();
+            console.log('Response:', res.status, text);
 
         } catch (error) {
             console.error('Error sending profile to server:', error);
@@ -338,74 +386,48 @@ export default function ProfileScreen() {
     const fetchAndSetWeeklyData = async () => {
         let weeklyStepsArray: WeeklyStepData[] = [];
         let weeklyHydrationArray: { date: string; dayName: string; intake: number; isToday: boolean }[] = [];
+        
         try {
-            const status = await getSdkStatus();
-            if (status !== 0) return { weeklyStepsArray, weeklyHydrationArray };
-            const initialized = await initialize();
-            if (!initialized) return { weeklyStepsArray, weeklyHydrationArray };
-
-            // Fetch weekly steps data
-            const stepsData = await readRecords('Steps', {
-                timeRangeFilter: {
-                    operator: 'between',
-                    startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-                    endTime: new Date().toISOString(),
-                },
-            });
-            const today = new Date();
-            for (let i = 6; i >= 0; i--) {
-                const date = new Date(today);
-                date.setDate(date.getDate() - i);
-                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
-                const isToday = i === 0;
-                const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-                const dayStart = new Date(date);
-                dayStart.setHours(0, 0, 0, 0);
-                const dayEnd = new Date(date);
-                dayEnd.setHours(23, 59, 59, 999);
-                const daySteps = (stepsData.records || stepsData)?.filter((record) => {
-                    const recordTime = new Date(record.startTime);
-                    return recordTime >= dayStart && recordTime <= dayEnd;
-                }).reduce((sum, record) => sum + (record.count || 0), 0);
-                weeklyStepsArray.push({
-                    date: dateString,
-                    dayName,
-                    steps: daySteps,
-                    isToday,
-                });
+            if (!hasPermissions) {
+                const granted = await requestPermissions();
+                if (!granted) {
+                    console.log('Health permissions not granted');
+                    return { weeklyStepsArray, weeklyHydrationArray };
+                }
             }
-            setWeeklySteps(weeklyStepsArray);
 
-            // Fetch weekly hydration data
-            const hydrationData = await readRecords('Hydration', {
-                timeRangeFilter: {
-                    operator: 'between',
-                    startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-                    endTime: new Date().toISOString(),
-                },
-            });
-            for (let i = 6; i >= 0; i--) {
-                const date = new Date(today);
-                date.setDate(date.getDate() - i);
-                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
-                const isToday = i === 0;
-                const dateString = date.toISOString().split('T')[0];
-                const dayStart = new Date(date);
-                dayStart.setHours(0, 0, 0, 0);
-                const dayEnd = new Date(date);
-                dayEnd.setHours(23, 59, 59, 999);
-                const dayHydration = (hydrationData.records || hydrationData)?.filter((record) => {
-                    const recordDate = new Date(record.startTime);
-                    return recordDate >= dayStart && recordDate <= dayEnd;
-                }).reduce((sum, record) => sum + (record.volume?.inLiters || 0), 0);
-                weeklyHydrationArray.push({
-                    date: dateString,
-                    dayName,
-                    intake: Math.round(dayHydration * 1000), // ml
-                    isToday,
+            // Load weekly health data using our health provider
+            const weekRange = getWeekRange(0); // Current week
+            const weeklyHealthData = await loadWeeklyData(weekRange);
+            
+            if (weeklyHealthData) {
+                // Convert to the format expected by existing UI
+                weeklyStepsArray = weeklyHealthData.steps.map((dayData, index) => {
+                    const date = new Date();
+                    date.setDate(date.getDate() - (6 - index));
+                    return {
+                        date: dayData.date,
+                        dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()],
+                        steps: dayData.value,
+                        isToday: index === 6,
+                    };
                 });
+                setWeeklySteps(weeklyStepsArray);
+
+                // Convert hydration data
+                weeklyHydrationArray = weeklyHealthData.water.map((dayData, index) => {
+                    const date = new Date();
+                    date.setDate(date.getDate() - (6 - index));
+                    return {
+                        date: dayData.date,
+                        dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()],
+                        intake: Math.round(dayData.value * 1000), // Convert L to ml
+                        isToday: index === 6,
+                    };
+                });
+                setWeeklyHydration(weeklyHydrationArray);
             }
-            setWeeklyHydration(weeklyHydrationArray);
+
             return { weeklyStepsArray, weeklyHydrationArray };
         } catch (error) {
             console.error('Error fetching Health Connect data:', error);
@@ -453,6 +475,7 @@ export default function ProfileScreen() {
     };
 
     const registerShareableAccount = async () => {
+        setIsRegistering(true);
         try {
             // Verify authentication first
             const authResult = await verifyAuthentication();
@@ -479,6 +502,8 @@ export default function ProfileScreen() {
         } catch (error) {
             console.error('Error registering shareable account:', error);
             Alert.alert('Error', 'Failed to register shareable account. Please try again.');
+        } finally {
+            setIsRegistering(false);
         }
     };
 
@@ -518,6 +543,7 @@ export default function ProfileScreen() {
     };
 
     const shareQRCode = async () => {
+        setIsSharing(true);
         try {
             if (!shareableLink) {
                 Alert.alert('Error', 'No shareable link available to share.');
@@ -566,6 +592,8 @@ export default function ProfileScreen() {
         } catch (error) {
             console.error('Error sharing QR code:', error);
             Alert.alert('Error', 'Failed to share profile. Please try again.');
+        } finally {
+            setIsSharing(false);
         }
     };
 
@@ -611,6 +639,7 @@ export default function ProfileScreen() {
                     text: 'Revoke',
                     style: 'destructive',
                     onPress: async () => {
+                        setIsRevoking(true);
                         try {
                             await AsyncStorage.removeItem('userShareId');
                             await AsyncStorage.removeItem('isAccountRegistered');
@@ -626,6 +655,8 @@ export default function ProfileScreen() {
                         } catch (error) {
                             console.error('Error revoking access:', error);
                             Alert.alert('Error', 'Failed to revoke access.');
+                        } finally {
+                            setIsRevoking(false);
                         }
                     }
                 }
@@ -999,11 +1030,21 @@ For medical use, please consult your healthcare provider.
                                     through QR code scanning or secure links. This requires device authentication for security.
                                 </Text>
                                 <TouchableOpacity
-                                    style={styles.registerButton}
+                                    style={[
+                                        styles.registerButton,
+                                        isRegistering && styles.registerButtonDisabled
+                                    ]}
                                     onPress={registerShareableAccount}
+                                    disabled={isRegistering}
                                 >
-                                    <Ionicons name="shield-checkmark-outline" size={20} color="white" />
-                                    <Text style={styles.registerButtonText}>Register for Doctor Access</Text>
+                                    {isRegistering ? (
+                                        <ActivityIndicator size="small" color="white" />
+                                    ) : (
+                                        <Ionicons name="shield-checkmark-outline" size={20} color="white" />
+                                    )}
+                                    <Text style={styles.registerButtonText}>
+                                        {isRegistering ? 'Registering...' : 'Register for Doctor Access'}
+                                    </Text>
                                 </TouchableOpacity>
                             </View>
                         ) : (isAccountRegistered && userShareId) ? (
@@ -1054,20 +1095,79 @@ For medical use, please consult your healthcare provider.
                                     </View>
                                 </View>
 
+                                {/* Health Report Summary */}
+                                {healthSummary && (
+                                    <View style={styles.healthSummarySection}>
+                                        <View style={styles.healthSummaryHeader}>
+                                            <Ionicons name="analytics-outline" size={20} color="#8E24AA" />
+                                            <Text style={styles.healthSummaryTitle}>Weekly Health Summary</Text>
+                                        </View>
+                                        <View style={styles.healthMetrics}>
+                                            <View style={styles.healthMetricRow}>
+                                                <View style={styles.healthMetric}>
+                                                    <Ionicons name="walk-outline" size={16} color="#4CAF50" />
+                                                    <Text style={styles.healthMetricValue}>{healthSummary.totalSteps.toLocaleString()}</Text>
+                                                    <Text style={styles.healthMetricLabel}>Steps</Text>
+                                                </View>
+                                                <View style={styles.healthMetric}>
+                                                    <Ionicons name="heart-outline" size={16} color="#F44336" />
+                                                    <Text style={styles.healthMetricValue}>{healthSummary.avgHeartRate || 'N/A'}</Text>
+                                                    <Text style={styles.healthMetricLabel}>Avg HR</Text>
+                                                </View>
+                                            </View>
+                                            <View style={styles.healthMetricRow}>
+                                                <View style={styles.healthMetric}>
+                                                    <Ionicons name="water-outline" size={16} color="#2196F3" />
+                                                    <Text style={styles.healthMetricValue}>{healthSummary.totalHydration}L</Text>
+                                                    <Text style={styles.healthMetricLabel}>Hydration</Text>
+                                                </View>
+                                                <View style={styles.healthMetric}>
+                                                    <Ionicons name="thermometer-outline" size={16} color="#FF9800" />
+                                                    <Text style={styles.healthMetricValue}>{healthSummary.avgTemperature || 'N/A'}°F</Text>
+                                                    <Text style={styles.healthMetricLabel}>Avg Temp</Text>
+                                                </View>
+                                            </View>
+                                        </View>
+                                        <Text style={styles.healthSummaryNote}>
+                                            📊 Complete health data including medical history is shared with your doctor when they scan the QR code or access the link above.
+                                        </Text>
+                                    </View>
+                                )}
+
                                 <View style={styles.actionButtons}>
                                     <TouchableOpacity
-                                        style={styles.shareButton}
+                                        style={[
+                                            styles.shareButton,
+                                            isSharing && styles.shareButtonDisabled
+                                        ]}
                                         onPress={shareQRCode}
+                                        disabled={isSharing}
                                     >
-                                        <Ionicons name="share-outline" size={16} color="white" />
-                                        <Text style={styles.shareButtonText}>Share</Text>
+                                        {isSharing ? (
+                                            <ActivityIndicator size="small" color="white" />
+                                        ) : (
+                                            <Ionicons name="share-outline" size={16} color="white" />
+                                        )}
+                                        <Text style={styles.shareButtonText}>
+                                            {isSharing ? 'Sharing...' : 'Share'}
+                                        </Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity
-                                        style={styles.revokeButton}
+                                        style={[
+                                            styles.revokeButton,
+                                            isRevoking && styles.revokeButtonDisabled
+                                        ]}
                                         onPress={revokeShareableAccess}
+                                        disabled={isRevoking}
                                     >
-                                        <Ionicons name="ban-outline" size={16} color="#f44336" />
-                                        <Text style={styles.revokeButtonText}>Revoke</Text>
+                                        {isRevoking ? (
+                                            <ActivityIndicator size="small" color="#f44336" />
+                                        ) : (
+                                            <Ionicons name="ban-outline" size={16} color="#f44336" />
+                                        )}
+                                        <Text style={styles.revokeButtonText}>
+                                            {isRevoking ? 'Revoking...' : 'Revoke'}
+                                        </Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>
@@ -2048,6 +2148,12 @@ const styles = StyleSheet.create({
         shadowRadius: 4,
         elevation: 4,
     },
+    registerButtonDisabled: {
+        backgroundColor: "#ccc",
+        opacity: 0.7,
+        shadowOpacity: 0,
+        elevation: 0,
+    },
     registerButtonText: {
         color: "white",
         fontSize: 16,
@@ -2163,6 +2269,10 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
+    shareButtonDisabled: {
+        backgroundColor: "#ccc",
+        opacity: 0.7,
+    },
     shareButtonText: {
         color: "white",
         fontSize: 13,
@@ -2197,6 +2307,11 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: "#f44336",
     },
+    revokeButtonDisabled: {
+        backgroundColor: "#f5f5f5",
+        borderColor: "#ccc",
+        opacity: 0.7,
+    },
     revokeButtonText: {
         color: "#f44336",
         fontSize: 13,
@@ -2219,5 +2334,118 @@ const styles = StyleSheet.create({
         color: "#666",
         marginLeft: 8,
         flex: 1,
+    },
+    healthReportSection: {
+        marginHorizontal: 20,
+        marginBottom: 20,
+    },
+    healthReportCard: {
+        backgroundColor: "white",
+        borderRadius: 12,
+        padding: 20,
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.1,
+        shadowRadius: 3.84,
+        elevation: 5,
+    },
+    healthReportHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 15,
+    },
+    healthReportTitle: {
+        fontSize: 18,
+        fontWeight: "600",
+        color: "#333",
+        marginLeft: 10,
+    },
+    healthReportDescription: {
+        fontSize: 14,
+        color: "#666",
+        lineHeight: 20,
+        marginBottom: 20,
+    },
+    healthReportButton: {
+        backgroundColor: "#8E24AA",
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        borderRadius: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    healthReportButtonDisabled: {
+        backgroundColor: "#ccc",
+    },
+    healthReportButtonText: {
+        color: "white",
+        fontSize: 16,
+        fontWeight: "600",
+        marginLeft: 8,
+    },
+    healthSummarySection: {
+        backgroundColor: "#f8f9fa",
+        borderRadius: 8,
+        padding: 15,
+        marginVertical: 10,
+        borderLeftWidth: 4,
+        borderLeftColor: "#8E24AA",
+    },
+    healthSummaryHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 12,
+    },
+    healthSummaryTitle: {
+        fontSize: 16,
+        fontWeight: "600",
+        color: "#333",
+        marginLeft: 8,
+    },
+    healthMetrics: {
+        marginBottom: 12,
+    },
+    healthMetricRow: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 8,
+    },
+    healthMetric: {
+        flex: 1,
+        alignItems: "center",
+        backgroundColor: "white",
+        padding: 10,
+        borderRadius: 8,
+        marginHorizontal: 4,
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 1,
+        },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 2,
+    },
+    healthMetricValue: {
+        fontSize: 16,
+        fontWeight: "700",
+        color: "#333",
+        marginVertical: 4,
+    },
+    healthMetricLabel: {
+        fontSize: 12,
+        color: "#666",
+        textAlign: "center",
+    },
+    healthSummaryNote: {
+        fontSize: 13,
+        color: "#666",
+        fontStyle: "italic",
+        textAlign: "center",
+        lineHeight: 18,
     },
 });

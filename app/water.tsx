@@ -22,6 +22,7 @@ import {
 } from "@/utils/healthUtils"
 import { Appbar } from "react-native-paper"
 import { router } from "expo-router"
+import { updateHydrationWidget } from "@/lib/WidgetUpdateService"
 
 const { width, height } = Dimensions.get("window")
 
@@ -221,6 +222,11 @@ export default function WaterScreen() {
             // Update local state and storage
             setWaterIntake(totalHydrationMl);
             await saveWaterIntake(totalHydrationMl);
+
+            // Update widget with new hydration data
+            updateHydrationWidget(totalHydrationMl).catch(error => {
+                console.error('Error updating hydration widget:', error);
+            });
 
             return true;
         } catch (error) {
@@ -469,6 +475,10 @@ export default function WaterScreen() {
         try {
             const todayKey = getTodayKey()
             await AsyncStorage.setItem(todayKey, intake.toString())
+            
+            // Update widget immediately with new water intake
+            await updateHydrationWidget(intake)
+            console.log('💧 Widget updated with water intake:', intake)
         } catch (error) {
             console.error("Error saving water intake:", error)
         }
@@ -652,6 +662,11 @@ export default function WaterScreen() {
     const addWater = async (amountMl: number) => {
         const newIntake = waterIntake + amountMl
         setWaterIntake(newIntake)
+
+        // Update widget with new hydration data
+        updateHydrationWidget(newIntake).catch(error => {
+            console.error('Error updating hydration widget:', error);
+        });
         saveWaterIntake(newIntake)
 
         // Also save to Health Connect if available and permitted

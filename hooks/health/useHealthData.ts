@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import { AndroidHealthProvider } from './AndroidHealthProvider';
 import { IOSHealthProvider } from './IOSHealthProvider';
 import { IHealthProvider } from './IHealthProvider';
@@ -68,7 +68,33 @@ export const useHealthData = () => {
             return data;
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'Failed to load daily health data';
-            setError(errorMessage);
+            
+            // Handle permission denied errors specifically
+            if (errorMessage === 'PERMISSION_DENIED') {
+                setError('Health permissions denied');
+                
+                // Show alert with option to open settings
+                Alert.alert(
+                    'Health Permissions Required',
+                    'This app needs access to your health data to function properly. Please grant permissions in Health Connect settings.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        { 
+                            text: 'Open Settings', 
+                            onPress: async () => {
+                                try {
+                                    await healthProvider.current.openSettings();
+                                } catch (settingsError) {
+                                    console.error('Error opening health settings:', settingsError);
+                                }
+                            }
+                        }
+                    ]
+                );
+            } else {
+                setError(errorMessage);
+            }
+            
             console.error('Error loading daily health data:', err);
             return null;
         } finally {

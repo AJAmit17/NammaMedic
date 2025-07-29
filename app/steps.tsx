@@ -28,6 +28,7 @@ import {
     openHealthConnectSettingsScreen,
 } from '@/utils/healthUtils';
 import { Appbar } from 'react-native-paper';
+import { updateStepsWidget } from '@/lib/WidgetUpdateService';
 import { router } from 'expo-router';
 const { width } = Dimensions.get('window');
 
@@ -178,6 +179,11 @@ export default function StepsScreen() {
 
             setCurrentSteps(totalSteps);
 
+            // Update widget with new step data
+            updateStepsWidget(totalSteps).catch(error => {
+                console.error('Error updating steps widget:', error);
+            });
+
             // Load weekly data
             await loadWeeklyStepsData();
         } catch (error) {
@@ -288,6 +294,10 @@ export default function StepsScreen() {
 
             await AsyncStorage.setItem('stepsGoal', newGoal.toString());
             setStepGoal(newGoal);
+
+            // Update widget immediately with new step goal
+            await updateStepsWidget();
+            console.log('👟 Widget updated with step goal:', newGoal);
 
             closeGoalModal();
 

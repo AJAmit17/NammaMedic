@@ -1,3 +1,6 @@
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import React, { useState } from 'react';
 import {
     View,
@@ -11,6 +14,7 @@ import {
     TextInput,
     Modal,
 } from 'react-native';
+import { Appbar } from 'react-native-paper';
 
 const AZURE_KEY = ""; // Replace with your Azure Computer Vision key
 const AZURE_ENDPOINT = ""; // Updated endpoint
@@ -123,76 +127,88 @@ export default function PrescriptionScreen() {
 
     return (
         <ScrollView style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.title}>Prescription Image Analyzer</Text>
-                <Text style={styles.subtitle}>Enter an image URL to extract text using Azure Computer Vision</Text>
-            </View>
-
-            <View style={styles.imageSection}>
-                {selectedImage ? (
-                    <View>
-                        <Image source={{ uri: selectedImage }} style={styles.selectedImage} />
-                        <Text style={styles.imageSourceText}>🌐 From URL</Text>
+            <LinearGradient colors={["#0288D1", "#0277BD", "#01579B"]} style={styles.header}>
+                <View style={styles.headerTop}>
+                    <Appbar.BackAction
+                        onPress={() => router.back()}
+                        iconColor="#ffffff"
+                        size={24}
+                        style={{ backgroundColor: 'rgba(255, 255, 255, 0.2)', margin: 0 }}
+                    />
+                    <View style={styles.headerContent}>
+                        <Text style={styles.title}>Prescription</Text>
+                        <Text style={styles.subtitle}>Enter an image URL to extract text using Azure Computer Vision</Text>
                     </View>
-                ) : (
-                    <View style={styles.placeholderImage}>
-                        <Text style={styles.placeholderText}>No image URL entered</Text>
+                </View>
+            </LinearGradient>
+
+            <View style={styles.contentContainer}>
+                <View style={styles.imageSection}>
+                    {selectedImage ? (
+                        <View>
+                            <Image source={{ uri: selectedImage }} style={styles.selectedImage} />
+                            <Text style={styles.imageSourceText}>🌐 From URL</Text>
+                        </View>
+                    ) : (
+                        <View style={styles.placeholderImage}>
+                            <Text style={styles.placeholderText}>No image URL entered</Text>
+                        </View>
+                    )}
+                </View>
+
+                <View style={styles.buttonContainer}>
+                    <TouchableOpacity style={[styles.button, styles.urlButton]} onPress={showUrlInput}>
+                        <Text style={styles.buttonText}>Enter Image URL</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.button, styles.extractButton, !selectedImage && styles.disabledButton]}
+                        onPress={extractTextFromImage}
+                        disabled={!selectedImage || isProcessing}
+                    >
+                        {isProcessing ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : (
+                            <Text style={styles.buttonText}>Call API</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+
+                {apiResponse && (
+                    <View style={styles.resultSection}>
+                        <Text style={styles.resultTitle}>Extracted Texts:</Text>
+                        <ScrollView style={styles.responseScrollView} nestedScrollEnabled={true}>
+                            {apiResponse.extractedTexts.length > 0 ? (
+                                apiResponse.extractedTexts.map((text, index) => (
+                                    <View key={index} style={styles.textItem}>
+                                        <Text style={styles.textIndex}>{index + 1}.</Text>
+                                        <Text style={styles.extractedText}>{text}</Text>
+                                    </View>
+                                ))
+                            ) : (
+                                <Text style={styles.noTextFound}>No text found in the image</Text>
+                            )}
+                        </ScrollView>
+
+                        <TouchableOpacity
+                            style={styles.rawResponseButton}
+                            onPress={() => setShowRawResponse(!showRawResponse)}
+                        >
+                            <Text style={styles.rawResponseButtonText}>
+                                {showRawResponse ? '▼ Hide Raw Response' : '▶ Show Raw Response'}
+                            </Text>
+                        </TouchableOpacity>
+
+                        {showRawResponse && (
+                            <ScrollView style={styles.rawResponseScrollView} nestedScrollEnabled={true}>
+                                <Text style={styles.responseText}>
+                                    {JSON.stringify(apiResponse.fullResponse, null, 2)}
+                                </Text>
+                            </ScrollView>
+                        )}
                     </View>
                 )}
             </View>
-
-            <View style={styles.buttonContainer}>
-                <TouchableOpacity style={[styles.button, styles.urlButton]} onPress={showUrlInput}>
-                    <Text style={styles.buttonText}>Enter Image URL</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                    style={[styles.button, styles.extractButton, !selectedImage && styles.disabledButton]}
-                    onPress={extractTextFromImage}
-                    disabled={!selectedImage || isProcessing}
-                >
-                    {isProcessing ? (
-                        <ActivityIndicator color="#fff" />
-                    ) : (
-                        <Text style={styles.buttonText}>Call API</Text>
-                    )}
-                </TouchableOpacity>
-            </View>
-
-            {apiResponse && (
-                <View style={styles.resultSection}>
-                    <Text style={styles.resultTitle}>Extracted Texts:</Text>
-                    <ScrollView style={styles.responseScrollView} nestedScrollEnabled={true}>
-                        {apiResponse.extractedTexts.length > 0 ? (
-                            apiResponse.extractedTexts.map((text, index) => (
-                                <View key={index} style={styles.textItem}>
-                                    <Text style={styles.textIndex}>{index + 1}.</Text>
-                                    <Text style={styles.extractedText}>{text}</Text>
-                                </View>
-                            ))
-                        ) : (
-                            <Text style={styles.noTextFound}>No text found in the image</Text>
-                        )}
-                    </ScrollView>
-
-                    <TouchableOpacity
-                        style={styles.rawResponseButton}
-                        onPress={() => setShowRawResponse(!showRawResponse)}
-                    >
-                        <Text style={styles.rawResponseButtonText}>
-                            {showRawResponse ? '▼ Hide Raw Response' : '▶ Show Raw Response'}
-                        </Text>
-                    </TouchableOpacity>
-
-                    {showRawResponse && (
-                        <ScrollView style={styles.rawResponseScrollView} nestedScrollEnabled={true}>
-                            <Text style={styles.responseText}>
-                                {JSON.stringify(apiResponse.fullResponse, null, 2)}
-                            </Text>
-                        </ScrollView>
-                    )}
-                </View>
-            )}
 
             {/* URL Input Modal */}
             <Modal
@@ -246,22 +262,44 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#f5f5f5',
-        padding: 16,
     },
     header: {
-        marginBottom: 24,
+        paddingTop: 40, // Significantly reduced to move title closer to notch
+        paddingBottom: 15, // Reduced from 25 to decrease gap
+        borderBottomLeftRadius: 30,
+        borderBottomRightRadius: 30,
+        position: "relative",
+    },
+    headerTop: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        width: "100%",
+        paddingHorizontal: 20,
+        position: "relative",
+    },
+    headerContent: {
         alignItems: 'center',
+        flex: 1,
+        marginHorizontal: 16,
     },
     title: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: '#333',
+        color: '#ffffff',
         marginBottom: 8,
+        textAlign: 'center',
     },
     subtitle: {
         fontSize: 16,
-        color: '#666',
+        color: '#ffffff',
         textAlign: 'center',
+        opacity: 0.9,
+    },
+    contentContainer: {
+        flex: 1,
+        paddingHorizontal: 16,
+        marginTop: 20,
     },
     imageSection: {
         marginBottom: 24,

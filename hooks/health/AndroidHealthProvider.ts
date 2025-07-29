@@ -1,7 +1,21 @@
-import { Platform } from 'react-native';
-import { initialize, requestPermission, readRecords, insertRecords, getSdkStatus, SdkAvailabilityStatus } from 'react-native-health-connect';
+import {
+    initialize, 
+    requestPermission, 
+    readRecords, 
+    insertRecords, 
+    getSdkStatus, 
+    SdkAvailabilityStatus, 
+    openHealthConnectSettings
+} from 'react-native-health-connect';
+import { Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { 
+    HealthData, 
+    HealthPermissionStatus, 
+    HealthDataRange, 
+    WeeklyHealthData
+} from './types';
 import { IHealthProvider } from './IHealthProvider';
-import { HealthData, HealthPermissionStatus, HealthDataRange, WeeklyHealthData, DailyHealthMetric } from './types';
 
 export class AndroidHealthProvider implements IHealthProvider {
     private isInitialized = false;
@@ -57,15 +71,76 @@ export class AndroidHealthProvider implements IHealthProvider {
                 { accessType: 'write' as const, recordType: 'Hydration' as const },
             ];
 
-            await requestPermission(permissions);
+            console.log('Requesting Health Connect permissions...');
+            
+            try {
+                // Request permissions - this should show the permission dialog
+                const result = await requestPermission(permissions);
+                console.log('Permission request result:', result);
+            } catch (permissionError) {
+                console.error('Error during permission request:', permissionError);
+                
+                // If the permission request fails, it might be because Health Connect is not set up
+                // Show an alert to guide the user to set up Health Connect
+                Alert.alert(
+                    'Health Connect Setup Required',
+                    'Please install and set up Health Connect from the Google Play Store to use health features.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        { 
+                            text: 'Open Settings', 
+                            onPress: () => this.openSettings()
+                        }
+                    ]
+                );
+                
+                return { granted: false, permissions: [] };
+            }
 
+            // Check if permissions were actually granted by trying to read a simple record
+            const permissionsGranted = await this.checkActualPermissions();
+            
+            if (!permissionsGranted) {
+                // If permissions still not granted, show dialog to open settings
+                Alert.alert(
+                    'Health Permissions Required',
+                    'Please grant health data permissions in Health Connect settings to use this feature.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        { 
+                            text: 'Open Settings', 
+                            onPress: () => this.openSettings()
+                        }
+                    ]
+                );
+            }
+            
             return {
-                granted: true,
-                permissions: permissions.map(p => `${p.accessType}:${p.recordType}`)
+                granted: permissionsGranted,
+                permissions: permissionsGranted ? permissions.map(p => `${p.accessType}:${p.recordType}`) : []
             };
         } catch (error) {
             console.error('Error requesting Android health permissions:', error);
             return { granted: false, permissions: [] };
+        }
+    }
+
+    private async checkActualPermissions(): Promise<boolean> {
+        try {
+            // Try to read steps data for today to check if permissions are actually granted
+            const today = new Date();
+            const timeRangeFilter = {
+                operator: 'between' as const,
+                startTime: new Date(today.setHours(0, 0, 0, 0)).toISOString(),
+                endTime: new Date(today.setHours(23, 59, 59, 999)).toISOString(),
+            };
+
+            await readRecords('Steps', { timeRangeFilter });
+            console.log('Permissions check passed - can read steps data');
+            return true;
+        } catch (error) {
+            console.log('Permissions check failed:', error);
+            return false;
         }
     }
 
@@ -77,8 +152,15 @@ export class AndroidHealthProvider implements IHealthProvider {
             }
 
             const status = await getSdkStatus();
+            if (status !== SdkAvailabilityStatus.SDK_AVAILABLE) {
+                return { granted: false, permissions: [] };
+            }
+
+            // Actually check if we can read data (real permission check)
+            const hasPermissions = await this.checkActualPermissions();
+            
             return {
-                granted: status === SdkAvailabilityStatus.SDK_AVAILABLE && this.isInitialized,
+                granted: hasPermissions,
                 permissions: []
             };
         } catch (error) {
@@ -114,9 +196,26 @@ export class AndroidHealthProvider implements IHealthProvider {
 
             // Read heart rate
             const heartRateRecords = await readRecords('HeartRate', { timeRangeFilter });
-            const averageHeartRate = heartRateRecords.records && heartRateRecords.records.length > 0
-                ? heartRateRecords.records.reduce((sum: number, record: any) => sum + record.beatsPerMinute, 0) / heartRateRecords.records.length
-                : 0;
+            let averageHeartRate = 0;
+            if (heartRateRecords.records && heartRateRecords.records.length > 0) {
+                const validHeartRates = heartRateRecords.records
+                    .map((record: any) => record.beatsPerMinute)
+                    .filter((bpm: any) => bpm != null && !isNaN(bpm) && bpm > 0);
+                
+                if (validHeartRates.length > 0) {
+                    averageHeartRate = validHeartRates.reduce((sum: number, bpm: number) => sum + bpm, 0) / validHeartRates.length;
+                }
+                console.log('Health Connect heart rate for', date.toISOString().split('T')[0], ':', averageHeartRate);
+            }
+            
+            // If no Health Connect heart rate data, check local storage
+            if (averageHeartRate === 0) {
+                const localHeartRate = await this.getLocalHeartRateData(date);
+                if (localHeartRate > 0) {
+                    averageHeartRate = localHeartRate;
+                    console.log('Using local heart rate for', date.toISOString().split('T')[0], ':', averageHeartRate);
+                }
+            }
 
             // Read body temperature
             const tempRecords = await readRecords('BodyTemperature', { timeRangeFilter });
@@ -151,7 +250,7 @@ export class AndroidHealthProvider implements IHealthProvider {
 
             return {
                 steps: totalSteps,
-                heartRate: Math.round(averageHeartRate),
+                heartRate: Math.round(averageHeartRate) || 0, // Ensure we never return NaN or null
                 distance: totalDistance,
                 weight: latestWeight,
                 height: latestHeight,
@@ -162,6 +261,13 @@ export class AndroidHealthProvider implements IHealthProvider {
             };
         } catch (error) {
             console.error('Error reading Android health data:', error);
+            
+            // Check if this is a permission error
+            if (error instanceof Error && error.message.includes('SecurityException')) {
+                console.log('Permission denied - throwing specific error for UI handling');
+                throw new Error('PERMISSION_DENIED');
+            }
+            
             return this.getEmptyHealthData();
         }
     }
@@ -276,8 +382,31 @@ export class AndroidHealthProvider implements IHealthProvider {
     }
 
     async openSettings(): Promise<void> {
-        // Implementation would depend on the health connect library
-        console.log('Opening Android Health Connect settings');
+        try {
+            await openHealthConnectSettings();
+            console.log('Opened Android Health Connect settings');
+        } catch (error) {
+            console.error('Error opening Android Health Connect settings:', error);
+        }
+    }
+
+    private async getLocalHeartRateData(date: Date): Promise<number> {
+        try {
+            const year = date.getFullYear();
+            const month = date.getMonth();
+            const day = date.getDate();
+            const key = `hr_${year}_${month}_${day}`;
+            
+            const savedHR = await AsyncStorage.getItem(key);
+            if (savedHR) {
+                const hrData = JSON.parse(savedHR);
+                return hrData.heartRate || 0;
+            }
+            return 0;
+        } catch (error) {
+            console.error('Error reading local heart rate data:', error);
+            return 0;
+        }
     }
 
     private getEmptyHealthData(): HealthData {

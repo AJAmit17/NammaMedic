@@ -7,7 +7,7 @@ import { useEffect, useState, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import * as Updates from 'expo-updates';
-import { useHealthData } from "@/hooks/health/useHealthData";
+import { useWidgetUpdates } from "@/hooks/useWidgetUpdates";
 
 const theme = {
   ...MD3LightTheme,
@@ -164,29 +164,7 @@ function useUpdateChecker() {
 export default function Layout() {
   useNotificationObserver();
   useUpdateChecker();
-
-  const { requestPermissions, hasPermissions, isLoading } = useHealthData();
-
-  useEffect(() => {
-    const initializeHealthPermissions = async () => {
-      if (!hasPermissions && !isLoading) {
-        try {
-          const granted = await requestPermissions();
-          if (!granted) {
-            Alert.alert(
-              'Health Permissions',
-              'Health data access is required for full app functionality. You can grant permissions later in Settings.',
-              [{ text: 'OK' }]
-            );
-          }
-        } catch (error) {
-          console.error('Error initializing health permissions:', error);
-        }
-      }
-    };
-
-    initializeHealthPermissions();
-  }, [hasPermissions, isLoading, requestPermissions]);
+  useWidgetUpdates(); // Auto-update widgets when app becomes active
 
   return (
     <PaperProvider theme={theme}>

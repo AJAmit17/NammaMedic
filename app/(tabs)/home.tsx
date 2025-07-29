@@ -28,7 +28,9 @@ import {
   requestNotificationPermissions,
   scheduleMedicationReminder,
 } from "@/utils/notifications";
-import { useHealthData } from '../../hooks/health';
+import {
+  useHealthData
+} from '@/hooks/health';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get("window");
@@ -154,11 +156,11 @@ export default function HomeScreen() {
   const [doseHistory, setDoseHistory] = useState<DoseHistory[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
-  const { 
-    hasPermissions: hasHealthPermissions, 
-    dailyData, 
+  const {
+    hasPermissions: hasHealthPermissions,
+    dailyData,
     loadDailyData,
-    isLoading 
+    isLoading
   } = useHealthData();
 
   const loadMedications = useCallback(async () => {
@@ -306,12 +308,12 @@ export default function HomeScreen() {
 
       loadMedications();
       loadUserProfile();
-      
+
       // Load health data if permissions are available
       if (hasHealthPermissions) {
         loadDailyData();
       }
-      
+
       return () => unsubscribe();
     }, [loadMedications, loadUserProfile, hasHealthPermissions, loadDailyData])
   );
@@ -323,7 +325,7 @@ export default function HomeScreen() {
       const scheduledTime = timeSlot || currentTime;
 
       await recordDose(medication.id, true, now.toISOString(), scheduledTime);
-      await loadMedications(); 
+      await loadMedications();
     } catch (error) {
       console.error("Error recording dose:", error);
       Alert.alert("Error", "Failed to record dose. Please try again.");
@@ -368,7 +370,7 @@ export default function HomeScreen() {
       }
     }
 
-    return medication.times[0]; 
+    return medication.times[0];
   };
 
   const getTotalDosesForToday = (medications: Medication[]) => {

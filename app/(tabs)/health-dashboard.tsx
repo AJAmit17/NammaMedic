@@ -30,6 +30,7 @@ import {
     openHealthConnectSettingsScreen
 } from "@/utils/healthUtils"
 import { router } from "expo-router"
+import { useWidgetUpdates } from "@/hooks/useWidgetUpdates"
 
 const screenWidth = Dimensions.get("window").width
 
@@ -153,6 +154,9 @@ const BMICard: React.FC<BMICardProps> = ({ weight, height }) => {
 };
 
 const HealthDashboard: React.FC = () => {
+    // Initialize widget updates hook for automatic sync
+    useWidgetUpdates();
+    
     const [healthData, setHealthData] = useState<HealthData>({
         steps: 8247,
         heartRate: 72,
