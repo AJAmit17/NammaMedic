@@ -488,19 +488,19 @@ export default function HomeScreen() {
         </View>
 
         {/* Health Metrics Section */}
-        {hasHealthPermissions && dailyData && (
+        {/* {hasHealthPermissions && dailyData && (
           <View style={styles.healthMetricsContainer}>
             <Text style={styles.sectionTitle}>Today's Health</Text>
           </View>
-        )}
+        )} */}
 
-        <View>
+        {/* <View>
           <TouchableOpacity>
             <Link href="/test" asChild>
               <Text style={styles.addMedicationButton}>Widget TEST Screen</Text>
             </Link>
           </TouchableOpacity>
-        </View>
+        </View> */}
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>

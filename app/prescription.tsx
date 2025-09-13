@@ -15,22 +15,104 @@ import {
     Modal,
 } from 'react-native';
 import { Appbar } from 'react-native-paper';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import * as ImagePicker from 'expo-image-picker';
 
-const AZURE_KEY = ""; // Replace with your Azure Computer Vision key
-const AZURE_ENDPOINT = ""; // Updated endpoint
+const GEMINI_API_KEY = "AIzaSyBuwEl50FypC2mQly5oCfecHP7qd8sMbdM";
+
+interface DoctorInfo {
+    name: string;
+    degree: string;
+    specialization: string;
+    clinic_name: string;
+    clinic_address: string;
+    clinic_hours: string;
+    holiday: string;
+    phone: string[];
+}
+
+interface PatientInfo {
+    name: string;
+    date: string;
+    age: string;
+    weight: string;
+    body_temperature: string;
+}
+
+interface PrescriptionItem {
+    sl_no: number;
+    medicine: string;
+    dosage_pattern: string;
+}
+
+interface PrescriptionData {
+    doctor: DoctorInfo;
+    patient: PatientInfo;
+    prescription: PrescriptionItem[];
+    note: string;
+    signature_present: boolean;
+}
 
 interface ApiResponse {
     fullResponse: any;
-    extractedTexts: string[];
+    prescriptionData: PrescriptionData | null;
+    rawText: string;
 }
 
 export default function PrescriptionScreen() {
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
+    const [imageSource, setImageSource] = useState<'url' | 'gallery' | 'camera' | null>(null);
     const [apiResponse, setApiResponse] = useState<ApiResponse | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [showUrlModal, setShowUrlModal] = useState(false);
     const [imageUrl, setImageUrl] = useState('');
     const [showRawResponse, setShowRawResponse] = useState(false);
+
+    const SYSTEM_PROMPT = `
+            You are an expert medical prescription analyzer. Analyze the prescription image and extract all relevant information into a structured JSON format.
+
+            CRITICAL: Return ONLY a valid JSON object. Do NOT include any markdown formatting, code blocks, or backticks like \`\`\`json. Return pure, clean JSON only.
+
+            Extract the following information and return ONLY a valid JSON object in this exact format:
+
+            {
+            "doctor": {
+                "name": "Doctor's full name",
+                "degree": "Medical degrees and qualifications",
+                "specialization": "Medical specialization if mentioned",
+                "clinic_name": "Name of clinic/hospital",
+                "clinic_address": "Complete address of clinic",
+                "clinic_hours": "Operating hours if mentioned",
+                "holiday": "Holiday information if mentioned",
+                "phone": ["phone numbers as array"]
+            },
+            "patient": {
+                "name": "Patient's full name",
+                "date": "Date of prescription",
+                "age": "Patient age if mentioned",
+                "weight": "Patient weight if mentioned",
+                "body_temperature": "Temperature if mentioned"
+            },
+            "prescription": [
+                {
+                "sl_no": 1,
+                "medicine": "Medicine name",
+                "dosage_pattern": "Dosage pattern (e.g., 1-0-1, twice daily, etc.)"
+                }
+            ],
+            "note": "Any additional notes or instructions",
+            "signature_present": true
+            }
+
+            Rules:
+            - Extract all text accurately from the prescription
+            - If information is not available, use empty string ""
+            - For arrays, use empty array [] if no data
+            - For prescription items, number them sequentially starting from 1
+            - Maintain exact medicine names and dosages as written
+            - Return ONLY the JSON object, no additional text, no markdown, no code blocks
+            - Do not wrap the response in \`\`\`json or any other formatting
+        `;
 
     const handleUrlSubmit = () => {
         if (!imageUrl.trim()) {
@@ -47,6 +129,7 @@ export default function PrescriptionScreen() {
         }
 
         setSelectedImage(imageUrl);
+        setImageSource('url');
         setApiResponse(null);
         setShowUrlModal(false);
         setImageUrl('');
@@ -56,70 +139,184 @@ export default function PrescriptionScreen() {
         setShowUrlModal(true);
     };
 
-    const extractTexts = (responseJson: any) => {
-        const allTexts: any = [];
-        if (responseJson?.readResult?.blocks) {
-            responseJson.readResult.blocks.forEach((block: any) => {
-                if (block.lines) {
-                    block.lines.forEach((line: any) => {
-                        if (line.text) {
-                            allTexts.push(line.text);
-                        }
-                    });
-                }
-            });
+    const requestPermissions = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission Required', 'Sorry, we need camera roll permissions to select images.');
+            return false;
         }
-
-        return allTexts;
+        return true;
     };
 
+    const pickImageFromGallery = async () => {
+        const hasPermission = await requestPermissions();
+        if (!hasPermission) return;
 
-    const extractTextFromImage = async () => {
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            quality: 0.8,
+        });
+
+        if (!result.canceled && result.assets[0]) {
+            setSelectedImage(result.assets[0].uri);
+            setImageSource('gallery');
+            setApiResponse(null);
+        }
+    };
+
+    const takePhoto = async () => {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission Required', 'Sorry, we need camera permissions to take photos.');
+            return;
+        }
+
+        const result = await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            quality: 0.8,
+        });
+
+        if (!result.canceled && result.assets[0]) {
+            setSelectedImage(result.assets[0].uri);
+            setImageSource('camera');
+            setApiResponse(null);
+        }
+    };
+
+    const convertImageToBase64 = async (imageUri: string): Promise<string> => {
+        try {
+            // Check if it's a URL or local file
+            if (imageUri.startsWith('http')) {
+                // Handle URL - same as before
+                const response = await fetch(imageUri);
+                const blob = await response.blob();
+                
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64String = reader.result as string;
+                        const base64Data = base64String.split(',')[1];
+                        resolve(base64Data);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            } else {
+                // Handle local file (from gallery or camera)
+                const response = await fetch(imageUri);
+                const blob = await response.blob();
+                
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64String = reader.result as string;
+                        const base64Data = base64String.split(',')[1];
+                        resolve(base64Data);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            }
+        } catch (error) {
+            throw new Error(`Failed to convert image to base64: ${error}`);
+        }
+    };
+
+    const getMimeTypeFromUri = (uri: string): string => {
+        if (uri.startsWith('http')) {
+            // Handle URL
+            const extension = uri.split('.').pop()?.toLowerCase();
+            switch (extension) {
+                case 'jpg':
+                case 'jpeg':
+                    return 'image/jpeg';
+                case 'png':
+                    return 'image/png';
+                case 'gif':
+                    return 'image/gif';
+                case 'webp':
+                    return 'image/webp';
+                default:
+                    return 'image/jpeg';
+            }
+        } else {
+            // Handle local file - default to jpeg for gallery/camera images
+            return 'image/jpeg';
+        }
+    };
+
+    const extractPrescriptionData = async () => {
         if (!selectedImage) {
             Alert.alert('Error', 'Please select an image first');
             return;
         }
 
-        if (!AZURE_KEY || !AZURE_ENDPOINT) {
-            Alert.alert('Configuration Error', 'Azure Computer Vision credentials not configured');
+        if (!GEMINI_API_KEY) {
+            Alert.alert('Configuration Error', 'Google Gemini API key not configured');
             return;
         }
 
         setIsProcessing(true);
 
         try {
-            const requestBody = JSON.stringify({
-                url: selectedImage,
-            });
+            // Initialize Gemini
+            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-            const analyzeUrl = `https://prescription-ocr.cognitiveservices.azure.com/computervision/imageanalysis:analyze?features=caption%2Cread&model-version=latest&language=en&api-version=2024-02-01`;
+            // Convert image URL to base64
+            const base64Image = await convertImageToBase64(selectedImage);
+            const mimeType = getMimeTypeFromUri(selectedImage);
 
-            const response = await fetch(analyzeUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Ocp-Apim-Subscription-Key': AZURE_KEY,
+            // Create the prompt with image
+            const prompt = SYSTEM_PROMPT;
+
+            const imagePart = {
+                inlineData: {
+                    data: base64Image,
+                    mimeType: mimeType,
                 },
-                body: requestBody,
-            });
+            };
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`API request failed: ${response.status} - ${errorText}`);
+            // Generate content
+            const result = await model.generateContent([prompt, imagePart]);
+            const response = await result.response;
+            const text = response.text();
+
+            console.log('Raw Gemini response:', text);
+
+            // Try to parse the JSON response
+            let prescriptionData: PrescriptionData | null = null;
+            try {
+                // Clean the response text to extract JSON
+                let cleanedText = text.trim();
+                
+                // Remove any markdown code blocks if present
+                cleanedText = cleanedText.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+                
+                // Find JSON object
+                const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    prescriptionData = JSON.parse(jsonMatch[0]);
+                } else {
+                    // Try parsing the entire cleaned text
+                    prescriptionData = JSON.parse(cleanedText);
+                }
+            } catch (parseError) {
+                console.error('Failed to parse JSON:', parseError);
+                console.log('Raw text that failed to parse:', text);
+                Alert.alert('Warning', 'Could not parse structured data, showing raw response');
             }
-
-            const result = await response.json();
-
-            const extractedTexts = extractTexts(result);
 
             setApiResponse({
                 fullResponse: result,
-                extractedTexts: extractedTexts,
+                prescriptionData: prescriptionData,
+                rawText: text,
             });
 
         } catch (error) {
-            console.error('Error calling API:', error);
-            Alert.alert('Error', `Failed to call API: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            console.error('Error calling Gemini API:', error);
+            Alert.alert('Error', `Failed to analyze prescription: ${error instanceof Error ? error.message : 'Unknown error'}`);
         } finally {
             setIsProcessing(false);
         }
@@ -137,7 +334,7 @@ export default function PrescriptionScreen() {
                     />
                     <View style={styles.headerContent}>
                         <Text style={styles.title}>Prescription</Text>
-                        <Text style={styles.subtitle}>Enter an image URL to extract text using Azure Computer Vision</Text>
+                        <Text style={styles.subtitle}>Analyze prescription using AI-powered Gemini Vision</Text>
                     </View>
                 </View>
             </LinearGradient>
@@ -147,48 +344,129 @@ export default function PrescriptionScreen() {
                     {selectedImage ? (
                         <View>
                             <Image source={{ uri: selectedImage }} style={styles.selectedImage} />
-                            <Text style={styles.imageSourceText}>🌐 From URL</Text>
+                            <Text style={styles.imageSourceText}>
+                                {imageSource === 'url' && '🌐 From URL'}
+                                {imageSource === 'gallery' && '📷 From Gallery'}
+                                {imageSource === 'camera' && '📸 From Camera'}
+                            </Text>
                         </View>
                     ) : (
                         <View style={styles.placeholderImage}>
-                            <Text style={styles.placeholderText}>No image URL entered</Text>
+                            <Text style={styles.placeholderText}>No image selected</Text>
                         </View>
                     )}
                 </View>
 
                 <View style={styles.buttonContainer}>
-                    <TouchableOpacity style={[styles.button, styles.urlButton]} onPress={showUrlInput}>
-                        <Text style={styles.buttonText}>Enter Image URL</Text>
+                    <TouchableOpacity style={[styles.button, styles.cameraButton]} onPress={takePhoto}>
+                        <Text style={styles.buttonText}>📸 Take Photo</Text>
                     </TouchableOpacity>
+                    
+                    <TouchableOpacity style={[styles.button, styles.galleryButton]} onPress={pickImageFromGallery}>
+                        <Text style={styles.buttonText}>🖼️ Choose from Gallery</Text>
+                    </TouchableOpacity>
+{/* 
+                    <TouchableOpacity style={[styles.button, styles.urlButton]} onPress={showUrlInput}>
+                        <Text style={styles.buttonText}>🌐 Enter Image URL</Text>
+                    </TouchableOpacity> */}
 
                     <TouchableOpacity
                         style={[styles.button, styles.extractButton, !selectedImage && styles.disabledButton]}
-                        onPress={extractTextFromImage}
+                        onPress={extractPrescriptionData}
                         disabled={!selectedImage || isProcessing}
                     >
                         {isProcessing ? (
                             <ActivityIndicator color="#fff" />
                         ) : (
-                            <Text style={styles.buttonText}>Call API</Text>
+                            <Text style={styles.buttonText}>Analyze Prescription</Text>
                         )}
                     </TouchableOpacity>
                 </View>
 
                 {apiResponse && (
                     <View style={styles.resultSection}>
-                        <Text style={styles.resultTitle}>Extracted Texts:</Text>
-                        <ScrollView style={styles.responseScrollView} nestedScrollEnabled={true}>
-                            {apiResponse.extractedTexts.length > 0 ? (
-                                apiResponse.extractedTexts.map((text, index) => (
-                                    <View key={index} style={styles.textItem}>
-                                        <Text style={styles.textIndex}>{index + 1}.</Text>
-                                        <Text style={styles.extractedText}>{text}</Text>
+                        {apiResponse.prescriptionData ? (
+                            <View>
+                                <Text style={styles.resultTitle}>Prescription Analysis:</Text>
+                                
+                                {/* Doctor Information */}
+                                <View style={styles.sectionContainer}>
+                                    <Text style={styles.sectionTitle}>👨‍⚕️ Doctor Information</Text>
+                                    <View style={styles.infoContainer}>
+                                        <Text style={styles.infoLabel}>Name:</Text>
+                                        <Text style={styles.infoValue}>{apiResponse.prescriptionData.doctor.name || 'Not found'}</Text>
                                     </View>
-                                ))
-                            ) : (
-                                <Text style={styles.noTextFound}>No text found in the image</Text>
-                            )}
-                        </ScrollView>
+                                    <View style={styles.infoContainer}>
+                                        <Text style={styles.infoLabel}>Degree:</Text>
+                                        <Text style={styles.infoValue}>{apiResponse.prescriptionData.doctor.degree || 'Not found'}</Text>
+                                    </View>
+                                    <View style={styles.infoContainer}>
+                                        <Text style={styles.infoLabel}>Clinic:</Text>
+                                        <Text style={styles.infoValue}>{apiResponse.prescriptionData.doctor.clinic_name || 'Not found'}</Text>
+                                    </View>
+                                </View>
+
+                                {/* Patient Information */}
+                                <View style={styles.sectionContainer}>
+                                    <Text style={styles.sectionTitle}>👤 Patient Information</Text>
+                                    <View style={styles.infoContainer}>
+                                        <Text style={styles.infoLabel}>Name:</Text>
+                                        <Text style={styles.infoValue}>{apiResponse.prescriptionData.patient.name || 'Not found'}</Text>
+                                    </View>
+                                    <View style={styles.infoContainer}>
+                                        <Text style={styles.infoLabel}>Date:</Text>
+                                        <Text style={styles.infoValue}>{apiResponse.prescriptionData.patient.date || 'Not found'}</Text>
+                                    </View>
+                                    {apiResponse.prescriptionData.patient.age && (
+                                        <View style={styles.infoContainer}>
+                                            <Text style={styles.infoLabel}>Age:</Text>
+                                            <Text style={styles.infoValue}>{apiResponse.prescriptionData.patient.age}</Text>
+                                        </View>
+                                    )}
+                                </View>
+
+                                {/* Prescription */}
+                                <View style={styles.sectionContainer}>
+                                    <Text style={styles.sectionTitle}>💊 Prescription</Text>
+                                    {apiResponse.prescriptionData.prescription.length > 0 ? (
+                                        apiResponse.prescriptionData.prescription.map((item, index) => (
+                                            <View key={index} style={styles.prescriptionItem}>
+                                                <Text style={styles.medicineNumber}>{item.sl_no}.</Text>
+                                                <View style={styles.medicineDetails}>
+                                                    <Text style={styles.medicineName}>{item.medicine}</Text>
+                                                    <Text style={styles.dosagePattern}>Dosage: {item.dosage_pattern}</Text>
+                                                </View>
+                                            </View>
+                                        ))
+                                    ) : (
+                                        <Text style={styles.noDataText}>No prescription items found</Text>
+                                    )}
+                                </View>
+
+                                {/* Notes */}
+                                {apiResponse.prescriptionData.note && (
+                                    <View style={styles.sectionContainer}>
+                                        <Text style={styles.sectionTitle}>📝 Notes</Text>
+                                        <Text style={styles.noteText}>{apiResponse.prescriptionData.note}</Text>
+                                    </View>
+                                )}
+
+                                {/* Signature Status */}
+                                <View style={styles.sectionContainer}>
+                                    <Text style={styles.sectionTitle}>✍️ Signature</Text>
+                                    <Text style={[styles.signatureStatus, apiResponse.prescriptionData.signature_present ? styles.signaturePresent : styles.signatureAbsent]}>
+                                        {apiResponse.prescriptionData.signature_present ? '✅ Signature Present' : '❌ No Signature Found'}
+                                    </Text>
+                                </View>
+                            </View>
+                        ) : (
+                            <View>
+                                <Text style={styles.resultTitle}>Raw Analysis Result:</Text>
+                                <ScrollView style={styles.responseScrollView} nestedScrollEnabled={true}>
+                                    <Text style={styles.rawText}>{apiResponse.rawText}</Text>
+                                </ScrollView>
+                            </View>
+                        )}
 
                         <TouchableOpacity
                             style={styles.rawResponseButton}
@@ -209,51 +487,6 @@ export default function PrescriptionScreen() {
                     </View>
                 )}
             </View>
-
-            {/* URL Input Modal */}
-            <Modal
-                visible={showUrlModal}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setShowUrlModal(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>Enter Image URL</Text>
-                        <TextInput
-                            style={styles.urlInput}
-                            placeholder="https://example.com/image.jpg"
-                            value={imageUrl}
-                            onChangeText={setImageUrl}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                        />
-                        <TouchableOpacity
-                            style={styles.testUrlButton}
-                            onPress={() => setImageUrl('https://learn.microsoft.com/azure/ai-services/computer-vision/media/quickstarts/presentation.png')}
-                        >
-                            <Text style={styles.testUrlText}>📄 Use Sample Image</Text>
-                        </TouchableOpacity>
-                        <View style={styles.modalButtons}>
-                            <TouchableOpacity
-                                style={[styles.modalButton, styles.cancelButton]}
-                                onPress={() => {
-                                    setShowUrlModal(false);
-                                    setImageUrl('');
-                                }}
-                            >
-                                <Text style={styles.cancelButtonText}>Cancel</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.modalButton, styles.submitButton]}
-                                onPress={handleUrlSubmit}
-                            >
-                                <Text style={styles.submitButtonText}>Use URL</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View>
-            </Modal>
         </ScrollView>
     );
 }
@@ -398,6 +631,12 @@ const styles = StyleSheet.create({
     urlButton: {
         backgroundColor: '#6f42c1',
     },
+    cameraButton: {
+        backgroundColor: '#e91e63',
+    },
+    galleryButton: {
+        backgroundColor: '#ff9800',
+    },
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -540,5 +779,113 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         padding: 12,
         marginBottom: 12,
+    },
+    // New styles for structured prescription display
+    sectionContainer: {
+        backgroundColor: '#f8f9fa',
+        borderRadius: 8,
+        padding: 16,
+        marginBottom: 16,
+        borderLeftWidth: 4,
+        borderLeftColor: '#007bff',
+    },
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#333',
+        marginBottom: 12,
+    },
+    infoContainer: {
+        flexDirection: 'row',
+        marginBottom: 8,
+        alignItems: 'flex-start',
+    },
+    infoLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#666',
+        width: 80,
+        marginRight: 12,
+    },
+    infoValue: {
+        fontSize: 14,
+        color: '#333',
+        flex: 1,
+        lineHeight: 20,
+    },
+    prescriptionItem: {
+        flexDirection: 'row',
+        backgroundColor: '#fff',
+        borderRadius: 8,
+        padding: 12,
+        marginBottom: 8,
+        borderLeftWidth: 3,
+        borderLeftColor: '#28a745',
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 1,
+        },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 2,
+    },
+    medicineNumber: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#28a745',
+        marginRight: 12,
+        minWidth: 30,
+    },
+    medicineDetails: {
+        flex: 1,
+    },
+    medicineName: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#333',
+        marginBottom: 4,
+    },
+    dosagePattern: {
+        fontSize: 14,
+        color: '#666',
+        fontStyle: 'italic',
+    },
+    noteText: {
+        fontSize: 14,
+        color: '#333',
+        lineHeight: 20,
+        fontStyle: 'italic',
+        backgroundColor: '#fff',
+        padding: 12,
+        borderRadius: 6,
+    },
+    signatureStatus: {
+        fontSize: 16,
+        fontWeight: '600',
+        padding: 12,
+        borderRadius: 6,
+        textAlign: 'center',
+    },
+    signaturePresent: {
+        backgroundColor: '#d4edda',
+        color: '#155724',
+    },
+    signatureAbsent: {
+        backgroundColor: '#f8d7da',
+        color: '#721c24',
+    },
+    noDataText: {
+        fontSize: 14,
+        color: '#999',
+        textAlign: 'center',
+        fontStyle: 'italic',
+        paddingVertical: 20,
+    },
+    rawText: {
+        fontSize: 14,
+        color: '#333',
+        lineHeight: 20,
+        fontFamily: 'monospace',
     },
 });

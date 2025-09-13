@@ -19,8 +19,7 @@ export async function updateStepsWidget(steps?: number): Promise<void> {
             widgetName: 'Steps',
             renderWidget: () => React.createElement(StepsWidget, {
                 steps: stepsData.steps,
-                goal: stepsData.goal,
-                widgetWidth: 'large'
+                goal: stepsData.goal
             }),
             widgetNotFound: () => {
                 console.log('No Steps widget found on home screen');
@@ -48,8 +47,7 @@ export async function updateHydrationWidget(intake?: number): Promise<void> {
             widgetName: 'Hydration',
             renderWidget: () => React.createElement(HydrationWidget, {
                 intake: hydrationData.intake,
-                goal: hydrationData.goal,
-                widgetWidth: 'large'
+                goal: hydrationData.goal
             }),
             widgetNotFound: () => {
                 console.log('No Hydration widget found on home screen');

@@ -122,6 +122,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         "expo-font",
         "expo-secure-store",
         [
+            "expo-image-picker",
+            {
+                "photosPermission": "The app accesses your photos to let you share them with your friends."
+            }
+        ],
+        [
             "expo-av",
             {
                 microphonePermission: "Allow Namma Medic to access your microphone for voice input in the AI Doctor feature."
