@@ -188,6 +188,7 @@ export default function ProfileScreen() {
 
     useEffect(() => {
         loadProfile();
+        loadShareableAccountData();
         initializeHealthData();
     }, []);
 
@@ -281,6 +282,39 @@ export default function ProfileScreen() {
             }
         } catch (error) {
             console.error('Error loading profile:', error);
+        }
+    };
+
+    const loadShareableAccountData = async () => {
+        try {
+            const [savedShareId, savedLink, savedExpiry, savedRegistration] = await Promise.all([
+                AsyncStorage.getItem('userShareId'),
+                AsyncStorage.getItem('shareableLink'),
+                AsyncStorage.getItem('accessExpiry'),
+                AsyncStorage.getItem('isAccountRegistered')
+            ]);
+
+            if (savedShareId) {
+                setUserShareId(savedShareId);
+            }
+            if (savedLink) {
+                setShareableLink(savedLink);
+            }
+            if (savedExpiry) {
+                const expiryTime = parseInt(savedExpiry);
+                setAccessExpiry(expiryTime);
+                
+                // Check if access has expired
+                if (Date.now() > expiryTime) {
+                    // Access has expired, clean up
+                    await revokeShareableAccessSilent();
+                }
+            }
+            if (savedRegistration === 'true') {
+                setIsAccountRegistered(true);
+            }
+        } catch (error) {
+            console.error('Error loading shareable account data:', error);
         }
     };
 
@@ -641,6 +675,40 @@ export default function ProfileScreen() {
                     onPress: async () => {
                         setIsRevoking(true);
                         try {
+                            // Send DELETE request to server to revoke access
+                            if (userShareId) {
+                                const payload = {
+                                    shareId: userShareId,
+                                    source: 'mobile-app'
+                                };
+
+                                const rawBody = JSON.stringify(payload);
+                                const signature = signPayload(rawBody);
+
+                                const finalPayload = {
+                                    ...payload,
+                                    signature
+                                };
+
+                                console.log('Revoking access on server:', finalPayload);
+
+                                const response = await fetch('https://namma-medic.vercel.app/api/webhook', {
+                                    method: 'DELETE',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify(finalPayload),
+                                });
+
+                                const result = await response.json();
+                                console.log('Revoke response:', response.status, result);
+
+                                if (!response.ok) {
+                                    console.warn('Server revoke failed, proceeding with local cleanup');
+                                }
+                            }
+
+                            // Clean up local storage regardless of server response
                             await AsyncStorage.removeItem('userShareId');
                             await AsyncStorage.removeItem('isAccountRegistered');
                             await AsyncStorage.removeItem('shareableLink');
@@ -654,7 +722,22 @@ export default function ProfileScreen() {
                             Alert.alert('Access Revoked', 'Shareable access has been revoked successfully.');
                         } catch (error) {
                             console.error('Error revoking access:', error);
-                            Alert.alert('Error', 'Failed to revoke access.');
+                            Alert.alert('Error', 'Failed to revoke access on server, but local access has been cleared.');
+                            
+                            // Clean up local storage even if server request fails
+                            try {
+                                await AsyncStorage.removeItem('userShareId');
+                                await AsyncStorage.removeItem('isAccountRegistered');
+                                await AsyncStorage.removeItem('shareableLink');
+                                await AsyncStorage.removeItem('accessExpiry');
+
+                                setUserShareId('');
+                                setShareableLink('');
+                                setAccessExpiry(null);
+                                setIsAccountRegistered(false);
+                            } catch (cleanupError) {
+                                console.error('Error during cleanup:', cleanupError);
+                            }
                         } finally {
                             setIsRevoking(false);
                         }
