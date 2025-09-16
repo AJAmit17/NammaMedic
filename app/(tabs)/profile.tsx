@@ -157,6 +157,7 @@ export default function ProfileScreen() {
     const [shareableLink, setShareableLink] = useState<string>('');
     const [isAccountRegistered, setIsAccountRegistered] = useState(false);
     const [accessExpiry, setAccessExpiry] = useState<number | null>(null);
+    const [revokeConfirmModalVisible, setRevokeConfirmModalVisible] = useState(false);
 
     // Health data states
     const [weeklySteps, setWeeklySteps] = useState<WeeklyStepData[]>([]);
@@ -663,88 +664,79 @@ export default function ProfileScreen() {
         }
     };
 
+    const showRevokeConfirmation = () => {
+        setRevokeConfirmModalVisible(true);
+    };
+
     const revokeShareableAccess = async () => {
-        Alert.alert(
-            'Revoke Access',
-            'Are you sure you want to revoke shareable access? This will invalidate the current QR code and link.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Revoke',
-                    style: 'destructive',
-                    onPress: async () => {
-                        setIsRevoking(true);
-                        try {
-                            // Send DELETE request to server to revoke access
-                            if (userShareId) {
-                                const payload = {
-                                    shareId: userShareId,
-                                    source: 'mobile-app'
-                                };
+        setRevokeConfirmModalVisible(false);
+        setIsRevoking(true);
+        try {
+            if (userShareId) {
+                const payload = {
+                    shareId: userShareId,
+                    source: 'mobile-app'
+                };
 
-                                const rawBody = JSON.stringify(payload);
-                                const signature = signPayload(rawBody);
+                const rawBody = JSON.stringify(payload);
+                const signature = signPayload(rawBody);
 
-                                const finalPayload = {
-                                    ...payload,
-                                    signature
-                                };
+                const finalPayload = {
+                    ...payload,
+                    signature
+                };
 
-                                console.log('Revoking access on server:', finalPayload);
+                console.log('Revoking access on server:', finalPayload);
 
-                                const response = await fetch('https://namma-medic.vercel.app/api/webhook', {
-                                    method: 'DELETE',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                    },
-                                    body: JSON.stringify(finalPayload),
-                                });
+                const response = await fetch('https://namma-medic.vercel.app/api/webhook', {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(finalPayload),
+                });
 
-                                const result = await response.json();
-                                console.log('Revoke response:', response.status, result);
+                const result = await response.json();
+                console.log('Revoke response:', response.status, result);
 
-                                if (!response.ok) {
-                                    console.warn('Server revoke failed, proceeding with local cleanup');
-                                }
-                            }
-
-                            // Clean up local storage regardless of server response
-                            await AsyncStorage.removeItem('userShareId');
-                            await AsyncStorage.removeItem('isAccountRegistered');
-                            await AsyncStorage.removeItem('shareableLink');
-                            await AsyncStorage.removeItem('accessExpiry');
-
-                            setUserShareId('');
-                            setShareableLink('');
-                            setAccessExpiry(null);
-                            setIsAccountRegistered(false);
-
-                            Alert.alert('Access Revoked', 'Shareable access has been revoked successfully.');
-                        } catch (error) {
-                            console.error('Error revoking access:', error);
-                            Alert.alert('Error', 'Failed to revoke access on server, but local access has been cleared.');
-                            
-                            // Clean up local storage even if server request fails
-                            try {
-                                await AsyncStorage.removeItem('userShareId');
-                                await AsyncStorage.removeItem('isAccountRegistered');
-                                await AsyncStorage.removeItem('shareableLink');
-                                await AsyncStorage.removeItem('accessExpiry');
-
-                                setUserShareId('');
-                                setShareableLink('');
-                                setAccessExpiry(null);
-                                setIsAccountRegistered(false);
-                            } catch (cleanupError) {
-                                console.error('Error during cleanup:', cleanupError);
-                            }
-                        } finally {
-                            setIsRevoking(false);
-                        }
-                    }
+                if (!response.ok) {
+                    console.warn('Server revoke failed, proceeding with local cleanup');
                 }
-            ]
-        );
+            }
+
+            // Clean up local storage regardless of server response
+            await AsyncStorage.removeItem('userShareId');
+            await AsyncStorage.removeItem('isAccountRegistered');
+            await AsyncStorage.removeItem('shareableLink');
+            await AsyncStorage.removeItem('accessExpiry');
+
+            setUserShareId('');
+            setShareableLink('');
+            setAccessExpiry(null);
+            setIsAccountRegistered(false);
+
+            Alert.alert('Access Revoked', 'Shareable access has been revoked successfully.');
+        } catch (error) {
+            console.error('Error revoking access:', error);
+            Alert.alert('Error', 'Failed to revoke access on server, but local access has been cleared.');
+            
+            // Clean up local storage even if server request fails
+            try {
+                await AsyncStorage.removeItem('userShareId');
+                await AsyncStorage.removeItem('isAccountRegistered');
+                await AsyncStorage.removeItem('shareableLink');
+                await AsyncStorage.removeItem('accessExpiry');
+
+                setUserShareId('');
+                setShareableLink('');
+                setAccessExpiry(null);
+                setIsAccountRegistered(false);
+            } catch (cleanupError) {
+                console.error('Error during cleanup:', cleanupError);
+            }
+        } finally {
+            setIsRevoking(false);
+        }
     };
 
     const handleEdit = (field: string, currentValue: string) => {
@@ -1133,10 +1125,26 @@ For medical use, please consult your healthcare provider.
                         ) : (isAccountRegistered && userShareId) ? (
                             <View style={styles.registeredSection}>
                                 {(accessExpiry) && (
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
-                                        <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
-                                        <Text style={[styles.statusText, { marginLeft: 8 }]}>
-                                            Shareable access enabled, expires at: {new Date(accessExpiry).toLocaleTimeString()} {Date.now() > accessExpiry ? '(EXPIRED)' : ''}
+                                    <View style={[
+                                        styles.statusContainer,
+                                        Date.now() > accessExpiry && styles.statusContainerExpired
+                                    ]}>
+                                        <View style={styles.statusIconContainer}>
+                                            <Ionicons 
+                                                name={Date.now() > accessExpiry ? "time-outline" : "checkmark-circle"} 
+                                                size={20} 
+                                                color={Date.now() > accessExpiry ? "#f44336" : "#4CAF50"} 
+                                            />
+                                            <Text style={[
+                                                styles.statusText, 
+                                                { marginLeft: 8 },
+                                                Date.now() > accessExpiry && styles.statusTextExpired
+                                            ]}>
+                                                {Date.now() > accessExpiry ? 'Access Expired' : 'Active Access'}
+                                            </Text>
+                                        </View>
+                                        <Text style={styles.statusTimeText}>
+                                            {Date.now() > accessExpiry ? 'Expired at:' : 'Expires at:'} {new Date(accessExpiry).toLocaleTimeString()}
                                         </Text>
                                     </View>
                                 )}
@@ -1238,18 +1246,23 @@ For medical use, please consult your healthcare provider.
                                     <TouchableOpacity
                                         style={[
                                             styles.revokeButton,
-                                            isRevoking && styles.revokeButtonDisabled
+                                            isRevoking && styles.revokeButtonDisabled,
+                                            (accessExpiry && Date.now() > accessExpiry) ? styles.revokeButtonExpired : null
                                         ]}
-                                        onPress={revokeShareableAccess}
+                                        onPress={showRevokeConfirmation}
                                         disabled={isRevoking}
                                     >
                                         {isRevoking ? (
                                             <ActivityIndicator size="small" color="#f44336" />
                                         ) : (
-                                            <Ionicons name="ban-outline" size={16} color="#f44336" />
+                                            <Ionicons 
+                                                name={(accessExpiry && Date.now() > accessExpiry) ? "refresh-outline" : "ban-outline"} 
+                                                size={16} 
+                                                color="#f44336" 
+                                            />
                                         )}
                                         <Text style={styles.revokeButtonText}>
-                                            {isRevoking ? 'Revoking...' : 'Revoke'}
+                                            {isRevoking ? 'Revoking...' : ((accessExpiry && Date.now() > accessExpiry) ? 'Clean Up' : 'Revoke')}
                                         </Text>
                                     </TouchableOpacity>
                                 </View>
@@ -1792,6 +1805,73 @@ For medical use, please consult your healthcare provider.
                                     </View>
                                 </View>
                                 <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Revoke Confirmation Modal */}
+            <Modal
+                visible={revokeConfirmModalVisible}
+                animationType="fade"
+                transparent={true}
+                onRequestClose={() => setRevokeConfirmModalVisible(false)}
+            >
+                <View style={styles.revokeModalOverlay}>
+                    <View style={styles.revokeModalContent}>
+                        <View style={styles.revokeModalHeader}>
+                            <Ionicons name="warning" size={48} color="#f44336" />
+                            <Text style={styles.revokeModalTitle}>Revoke Access</Text>
+                        </View>
+                        
+                        <Text style={styles.revokeModalDescription}>
+                            Are you sure you want to revoke shareable access? This action will:
+                        </Text>
+                        
+                        <View style={styles.revokeWarningList}>
+                            <View style={styles.revokeWarningItem}>
+                                <Ionicons name="close-circle-outline" size={20} color="#f44336" />
+                                <Text style={styles.revokeWarningText}>Invalidate the current QR code</Text>
+                            </View>
+                            <View style={styles.revokeWarningItem}>
+                                <Ionicons name="close-circle-outline" size={20} color="#f44336" />
+                                <Text style={styles.revokeWarningText}>Deactivate the shareable link</Text>
+                            </View>
+                            <View style={styles.revokeWarningItem}>
+                                <Ionicons name="close-circle-outline" size={20} color="#f44336" />
+                                <Text style={styles.revokeWarningText}>Remove data from server</Text>
+                            </View>
+                        </View>
+
+                        <Text style={styles.revokeModalNote}>
+                            You can register for shareable access again anytime.
+                        </Text>
+
+                        <View style={styles.revokeModalButtons}>
+                            <TouchableOpacity
+                                style={styles.revokeModalCancelButton}
+                                onPress={() => setRevokeConfirmModalVisible(false)}
+                            >
+                                <Text style={styles.revokeModalCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            
+                            <TouchableOpacity
+                                style={[
+                                    styles.revokeModalConfirmButton,
+                                    isRevoking && styles.revokeModalConfirmButtonDisabled
+                                ]}
+                                onPress={revokeShareableAccess}
+                                disabled={isRevoking}
+                            >
+                                {isRevoking ? (
+                                    <ActivityIndicator size="small" color="white" />
+                                ) : (
+                                    <Ionicons name="trash-outline" size={16} color="white" />
+                                )}
+                                <Text style={styles.revokeModalConfirmText}>
+                                    {isRevoking ? 'Revoking...' : 'Yes, Revoke'}
+                                </Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -2401,6 +2481,10 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         marginLeft: 4,
     },
+    revokeButtonExpired: {
+        backgroundColor: "#fff8e1",
+        borderColor: "#ffb74d",
+    },
     securityInfo: {
         backgroundColor: "#f8f9fa",
         borderRadius: 8,
@@ -2530,5 +2614,149 @@ const styles = StyleSheet.create({
         fontStyle: "italic",
         textAlign: "center",
         lineHeight: 18,
+    },
+
+    // Revoke Modal Styles
+    revokeModalOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0, 0, 0, 0.6)",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 20,
+    },
+    revokeModalContent: {
+        backgroundColor: "white",
+        borderRadius: 20,
+        padding: 25,
+        width: "100%",
+        maxWidth: 400,
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 4,
+        },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
+        elevation: 10,
+    },
+    revokeModalHeader: {
+        alignItems: "center",
+        marginBottom: 20,
+    },
+    revokeModalTitle: {
+        fontSize: 20,
+        fontWeight: "700",
+        color: "#333",
+        marginTop: 10,
+        textAlign: "center",
+    },
+    revokeModalDescription: {
+        fontSize: 16,
+        color: "#666",
+        textAlign: "center",
+        marginBottom: 20,
+        lineHeight: 22,
+    },
+    revokeWarningList: {
+        backgroundColor: "#fff3f3",
+        borderRadius: 12,
+        padding: 15,
+        marginBottom: 20,
+        borderLeftWidth: 4,
+        borderLeftColor: "#f44336",
+    },
+    revokeWarningItem: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 8,
+    },
+    revokeWarningText: {
+        fontSize: 14,
+        color: "#666",
+        marginLeft: 10,
+        flex: 1,
+    },
+    revokeModalNote: {
+        fontSize: 14,
+        color: "#8E24AA",
+        textAlign: "center",
+        fontStyle: "italic",
+        marginBottom: 25,
+    },
+    revokeModalButtons: {
+        flexDirection: "row",
+        gap: 12,
+    },
+    revokeModalCancelButton: {
+        flex: 1,
+        backgroundColor: "#f8f9fa",
+        paddingVertical: 14,
+        paddingHorizontal: 20,
+        borderRadius: 12,
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: "#e0e0e0",
+    },
+    revokeModalCancelText: {
+        color: "#666",
+        fontSize: 16,
+        fontWeight: "600",
+    },
+    revokeModalConfirmButton: {
+        flex: 1,
+        backgroundColor: "#f44336",
+        paddingVertical: 14,
+        paddingHorizontal: 20,
+        borderRadius: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        shadowColor: "#f44336",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 4,
+    },
+    revokeModalConfirmButtonDisabled: {
+        backgroundColor: "#ccc",
+        opacity: 0.7,
+        shadowOpacity: 0,
+        elevation: 0,
+    },
+    revokeModalConfirmText: {
+        color: "white",
+        fontSize: 16,
+        fontWeight: "600",
+        marginLeft: 6,
+    },
+
+    // Enhanced Status Styles
+    statusContainer: {
+        backgroundColor: "#f0f8ff",
+        borderRadius: 12,
+        padding: 15,
+        marginBottom: 15,
+        borderWidth: 1,
+        borderColor: "#e0f2fe",
+    },
+    statusContainerExpired: {
+        backgroundColor: "#fff3f3",
+        borderColor: "#ffebee",
+    },
+    statusIconContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 5,
+    },
+    statusTextExpired: {
+        color: "#f44336",
+    },
+    statusTimeText: {
+        fontSize: 14,
+        color: "#666",
+        marginLeft: 28,
     },
 });
