@@ -1,36 +1,22 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
     View,
     Text,
     StyleSheet,
-    FlatList,
-    Image,
     TouchableOpacity,
-    Linking,
     Platform,
     Alert,
     Dimensions,
-    ScrollView,
+    ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Colors } from "@/constants/Colors";
 import * as Location from 'expo-location';
-import Animated, {
-    useSharedValue,
-    useAnimatedStyle,
-    withRepeat,
-    withTiming,
-    withSequence,
-    interpolate,
-    Easing,
-} from 'react-native-reanimated';
-import { Appbar } from "react-native-paper";
-import { ImprovedOSMService } from '@/lib/ImprovedOSMService';
+import { WebView } from 'react-native-webview';
 
-// Define the medical facility data interface
+const { width, height } = Dimensions.get('window');
+
 interface MedicalFacility {
     id: string;
     name: string;
@@ -46,122 +32,12 @@ interface MedicalFacility {
     };
 }
 
-// Custom Loading Component using React Reanimated
-const LoadingAnimation = ({ message }: { message: string }) => {
-    const colorScheme = useColorScheme();
-    const rotation = useSharedValue(0);
-    const scale = useSharedValue(1);
-    const opacity = useSharedValue(0.3);
-
-    React.useEffect(() => {
-        rotation.value = withRepeat(
-            withTiming(360, { duration: 2000, easing: Easing.linear }),
-            -1,
-            false
-        );
-        scale.value = withRepeat(
-            withSequence(
-                withTiming(1.2, { duration: 1000 }),
-                withTiming(1, { duration: 1000 })
-            ),
-            -1,
-            true
-        );
-        opacity.value = withRepeat(
-            withSequence(
-                withTiming(1, { duration: 800 }),
-                withTiming(0.3, { duration: 800 })
-            ),
-            -1,
-            true
-        );
-    }, []);
-
-    const animatedStyle = useAnimatedStyle(() => {
-        return {
-            transform: [
-                { rotate: `${rotation.value}deg` },
-                { scale: scale.value }
-            ],
-            opacity: opacity.value,
-        };
-    });
-
-    const pulseStyle = useAnimatedStyle(() => {
-        return {
-            opacity: interpolate(opacity.value, [0.3, 1], [0.2, 0.6]),
-            transform: [{ scale: interpolate(opacity.value, [0.3, 1], [1, 1.5]) }],
-        };
-    });
-
-    return (
-        <View style={styles.loadingContainer}>
-            <View style={styles.loadingContent}>
-                {/* Pulsing background circle */}
-                <Animated.View 
-                    style={[
-                        styles.pulseCircle, 
-                        { backgroundColor: Colors[colorScheme ?? "light"].tint },
-                        pulseStyle
-                    ]} 
-                />
-                
-                {/* Main rotating icon */}
-                <Animated.View style={animatedStyle}>
-                    <Ionicons 
-                        name="medical" 
-                        size={50} 
-                        color={Colors[colorScheme ?? "light"].tint} 
-                    />
-                </Animated.View>
-                
-                {/* Loading message */}
-                <Text style={[
-                    styles.loadingMessage, 
-                    { color: Colors[colorScheme ?? "light"].text }
-                ]}>
-                    {message}
-                </Text>
-                
-                {/* Progress dots */}
-                <View style={styles.dotsContainer}>
-                    {[0, 1, 2].map((index) => (
-                        <Animated.View
-                            key={index}
-                            style={[
-                                styles.dot,
-                                { backgroundColor: Colors[colorScheme ?? "light"].tint },
-                                useAnimatedStyle(() => {
-                                    const delay = index * 200;
-                                    return {
-                                        opacity: withRepeat(
-                                            withSequence(
-                                                withTiming(0.3, { duration: 0 }),
-                                                withTiming(0.3, { duration: delay }),
-                                                withTiming(1, { duration: 300 }),
-                                                withTiming(0.3, { duration: 300 })
-                                            ),
-                                            -1,
-                                            false
-                                        ),
-                                    };
-                                })
-                            ]}
-                        />
-                    ))}
-                </View>
-            </View>
-        </View>
-    );
-};
-
-// OpenStreetMap Service - completely free and working perfectly!
-export default function PharmacyScreenComponent() {
+export default function PharmacyScreen() {
     const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
     const [facilities, setFacilities] = useState<MedicalFacility[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [loadingMessage, setLoadingMessage] = useState<string>("Getting your location...");
-    const [error, setError] = useState<string | null>(null);
+    const webViewRef = useRef<WebView>(null);
     const colorScheme = useColorScheme();
 
     useEffect(() => {
@@ -169,13 +45,12 @@ export default function PharmacyScreenComponent() {
     }, []);
 
     useEffect(() => {
-        if (location) {
+        if (location && webViewRef.current) {
             fetchNearbyMedicalFacilities();
         }
     }, [location]);
 
     const getCurrentLocation = async () => {
-        const startTime = Date.now();
         console.log('🔍 Starting location request...');
         
         try {
@@ -202,17 +77,14 @@ export default function PharmacyScreenComponent() {
                 return;
             }
 
-            // Get current location with timeout and accuracy settings
+            // Get current location
             console.log('🎯 Getting current position...');
-            const locationStartTime = Date.now();
             
             const currentLocation = await Location.getCurrentPositionAsync({
                 accuracy: Location.Accuracy.Balanced,
-                timeInterval: 8000, // Reduced timeout to 8 seconds
             });
 
-            const locationTime = Date.now() - locationStartTime;
-            console.log(`✅ Location obtained in ${locationTime}ms:`, {
+            console.log(`✅ Location obtained:`, {
                 latitude: currentLocation.coords.latitude,
                 longitude: currentLocation.coords.longitude,
                 accuracy: currentLocation.coords.accuracy
@@ -223,8 +95,7 @@ export default function PharmacyScreenComponent() {
                 longitude: currentLocation.coords.longitude,
             });
         } catch (error) {
-            const totalTime = Date.now() - startTime;
-            console.error(`❌ Error getting location after ${totalTime}ms:`, error);
+            console.error(`❌ Error getting location:`, error);
             
             Alert.alert(
                 'Location Error', 
@@ -245,187 +116,135 @@ export default function PharmacyScreenComponent() {
             return;
         }
 
-        const fetchStartTime = Date.now();
-        console.log('🏥 Starting medical facilities search...', {
-            location: { lat: location.latitude, lng: location.longitude },
-            maxRadius: '4km'
-        });
-
-        setLoading(true);
-        setError(null);
+        console.log('🏥 Fetching medical facilities nearby...');
+        setLoadingMessage("Searching for medical facilities nearby...");
 
         try {
-            setLoadingMessage("Searching for medical facilities nearby...");
-            
             const maxRadius = 4000; // 4km in meters
-            let allFacilities: MedicalFacility[] = [];
             
-            console.log(`🔍 Searching within ${maxRadius/1000}km radius...`);
-            setLoadingMessage(`Searching within ${maxRadius/1000}km radius...`);
-            
-            // Use OpenStreetMap - proven to work perfectly!
-            try {
-                setLoadingMessage("Searching with OpenStreetMap...");
-                console.log('�️ Trying OSM API...');
-                allFacilities = await ImprovedOSMService.findNearbyMedicalFacilities(
-                    location.latitude,
-                    location.longitude,
-                    maxRadius
+            // Use Overpass API to get real data from OpenStreetMap
+            const overpassQuery = `
+                [out:json][timeout:25];
+                (
+                    node["amenity"="pharmacy"](around:${maxRadius},${location.latitude},${location.longitude});
+                    node["amenity"="hospital"](around:${maxRadius},${location.latitude},${location.longitude});
+                    node["amenity"="clinic"](around:${maxRadius},${location.latitude},${location.longitude});
+                    node["healthcare"="pharmacy"](around:${maxRadius},${location.latitude},${location.longitude});
+                    node["healthcare"="hospital"](around:${maxRadius},${location.latitude},${location.longitude});
+                    node["healthcare"="clinic"](around:${maxRadius},${location.latitude},${location.longitude});
                 );
-                console.log(`✅ OpenStreetMap returned ${allFacilities.length} facilities`);
-            } catch (osmError) {
-                console.warn('🟡 OpenStreetMap failed, trying fallback Overpass...', osmError);
+                out body 50;
+            `;
+
+            const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
+            
+            const response = await fetch(overpassUrl);
+            
+            if (response.ok) {
+                const data = await response.json();
                 
-                // Fallback to your original Overpass API implementation
-                try {
-                    setLoadingMessage("Searching with fallback method...");
-                    allFacilities = await fetchWithOverpassAPI(location, maxRadius);
-                    console.log(`✅ Fallback Overpass returned ${allFacilities.length} facilities`);
-                } catch (overpassError) {
-                    console.error('🔴 All OpenStreetMap methods failed, using generated data...', overpassError);
-                    throw new Error('All location APIs failed');
+                if (data.elements && data.elements.length > 0) {
+                    const parsedFacilities = data.elements
+                        .map((element: any) => {
+                            const distance = calculateDistance(
+                                location.latitude,
+                                location.longitude,
+                                element.lat,
+                                element.lon
+                            );
+
+                            if (distance > 4) return null;
+
+                            return {
+                                id: element.id.toString(),
+                                name: element.tags.name || getDefaultName(element.tags.amenity || element.tags.healthcare),
+                                address: element.tags.address || 
+                                        `${element.tags["addr:street"] || ""} ${element.tags["addr:housenumber"] || ""}`.trim() ||
+                                        "Address not available",
+                                distance: distance,
+                                category: element.tags.amenity || element.tags.healthcare || "pharmacy",
+                                phone: element.tags.phone || element.tags["contact:phone"] || undefined,
+                                coordinates: {
+                                    latitude: element.lat,
+                                    longitude: element.lon,
+                                },
+                                rating: generateRealisticRating(element.tags.amenity || element.tags.healthcare),
+                                isOpen: isLikelyOpen(element.tags.amenity || element.tags.healthcare),
+                            };
+                        })
+                        .filter((facility: any) => facility !== null);
+
+                    if (parsedFacilities.length > 0) {
+                        parsedFacilities.sort((a: MedicalFacility, b: MedicalFacility) => a.distance - b.distance);
+                        const finalFacilities = parsedFacilities.slice(0, 20);
+                        setFacilities(finalFacilities);
+                        console.log(`✅ Found ${finalFacilities.length} facilities`);
+                        
+                        // Send facilities to WebView
+                        if (webViewRef.current) {
+                            webViewRef.current.injectJavaScript(`
+                                window.updateMarkers(${JSON.stringify(finalFacilities)});
+                                true;
+                            `);
+                        }
+                        setLoading(false);
+                        return;
+                    }
                 }
             }
-
-            if (allFacilities.length > 0) {
-                setLoadingMessage("Sorting results by distance...");
-                console.log('📍 Sorting facilities by distance...');
-                
-                // Sort by distance and limit to 20 results within 4km
-                allFacilities.sort((a: MedicalFacility, b: MedicalFacility) => a.distance - b.distance);
-                const finalFacilities = allFacilities.slice(0, 20);
-                
-                console.log('📋 Final facilities summary:', {
-                    total: finalFacilities.length,
-                    closest: finalFacilities[0]?.distance.toFixed(2) + 'km',
-                    furthest: finalFacilities[finalFacilities.length - 1]?.distance.toFixed(2) + 'km',
-                    categories: finalFacilities.reduce((acc: any, f) => {
-                        acc[f.category] = (acc[f.category] || 0) + 1;
-                        return acc;
-                    }, {})
-                });
-                
-                setFacilities(finalFacilities);
-            } else {
-                throw new Error('No facilities found');
+            
+            // Fallback to generated data
+            console.log('🚨 Using fallback data');
+            const fallbackData = generateFallbackMedicalFacilities(location.latitude, location.longitude, 4);
+            setFacilities(fallbackData);
+            
+            if (webViewRef.current) {
+                webViewRef.current.injectJavaScript(`
+                    window.updateMarkers(${JSON.stringify(fallbackData)});
+                    true;
+                `);
             }
         } catch (err) {
-            const totalTime = Date.now() - fetchStartTime;
-            console.error(`❌ Error fetching facilities after ${totalTime}ms:`, err);
+            console.error(`❌ Error fetching facilities:`, err);
+            const fallbackData = generateFallbackMedicalFacilities(location.latitude, location.longitude, 4);
+            setFacilities(fallbackData);
             
-            setLoadingMessage("Loading fallback data...");
-            // If everything fails, use our fallback data within 4km
-            const facilitiesData = generateFallbackMedicalFacilities(
-                location.latitude,
-                location.longitude,
-                4 // 4km max radius
-            );
-            setFacilities(facilitiesData);
-            
-            console.log(`🚨 Emergency fallback: Generated ${facilitiesData.length} facilities`);
+            if (webViewRef.current) {
+                webViewRef.current.injectJavaScript(`
+                    window.updateMarkers(${JSON.stringify(fallbackData)});
+                    true;
+                `);
+            }
         } finally {
-            const totalTime = Date.now() - fetchStartTime;
-            console.log(`⏱️ Total fetch operation completed in ${totalTime}ms`);
             setLoading(false);
         }
     };
 
-    // Keep your existing Overpass API method as fallback
-    const fetchWithOverpassAPI = async (location: { latitude: number; longitude: number }, maxRadius: number) => {
-        const overpassQuery = `
-            [out:json][timeout:15];
-            (
-                node["amenity"="pharmacy"](around:${maxRadius},${location.latitude},${location.longitude});
-                node["amenity"="hospital"](around:${maxRadius},${location.latitude},${location.longitude});
-                node["amenity"="clinic"](around:${maxRadius},${location.latitude},${location.longitude});
-                node["healthcare"="pharmacy"](around:${maxRadius},${location.latitude},${location.longitude});
-                node["healthcare"="hospital"](around:${maxRadius},${location.latitude},${location.longitude});
-                node["healthcare"="clinic"](around:${maxRadius},${location.latitude},${location.longitude});
-            );
-            out body 50;
-        `;
-
-        const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
-        
-        const response = await fetch(overpassUrl);
-        if (!response.ok) {
-            throw new Error(`Overpass API request failed with status ${response.status}`);
-        }
-
-        const data = await response.json();
-        
-        if (!data.elements || data.elements.length === 0) {
-            throw new Error('No results from Overpass API');
-        }
-
-        return data.elements
-            .map((element: any) => {
-                const distance = calculateDistance(
-                    location.latitude,
-                    location.longitude,
-                    element.lat,
-                    element.lon
-                );
-
-                if (distance > 4) return null;
-
-                return {
-                    id: element.id.toString(),
-                    name: element.tags.name || getDefaultName(element.tags.amenity || element.tags.healthcare),
-                    address: element.tags.address || 
-                            `${element.tags["addr:street"] || ""} ${element.tags["addr:housenumber"] || ""}`.trim() ||
-                            "Address not available",
-                    distance: distance,
-                    category: element.tags.amenity || element.tags.healthcare || "pharmacy",
-                    phone: element.tags.phone || element.tags["contact:phone"] || undefined,
-                    coordinates: {
-                        latitude: element.lat,
-                        longitude: element.lon,
-                    },
-                    rating: generateRealisticRating(element.tags.amenity || element.tags.healthcare),
-                    isOpen: isLikelyOpen(element.tags.amenity || element.tags.healthcare),
-                };
-            })
-            .filter((facility: any) => facility !== null);
-    };
-
-    // Helper function to generate more realistic ratings
     const generateRealisticRating = (category: string) => {
         const baseRating = category === 'hospital' ? 3.8 : category === 'pharmacy' ? 4.1 : 3.9;
         return Math.round((baseRating + (Math.random() * 0.6 - 0.3)) * 10) / 10;
     };
 
-    // Helper function to determine if facility is likely open
     const isLikelyOpen = (category: string) => {
         const now = new Date();
         const hour = now.getHours();
         
-        if (category === 'hospital') return true; // Hospitals are typically 24/7
-        if (category === 'pharmacy') return hour >= 8 && hour <= 22; // 8 AM to 10 PM
-        return hour >= 9 && hour <= 18; // Clinics typically 9 AM to 6 PM
+        if (category === 'hospital') return true;
+        if (category === 'pharmacy') return hour >= 8 && hour <= 22;
+        return hour >= 9 && hour <= 18;
     };
 
     const getDefaultName = (category: string) => {
         switch (category) {
-            case "pharmacy":
-                return "Pharmacy";
-            case "hospital":
-                return "Hospital";
-            case "clinic":
-                return "Medical Clinic";
-            default:
-                return "Medical Facility";
+            case "pharmacy": return "Pharmacy";
+            case "hospital": return "Hospital";
+            case "clinic": return "Medical Clinic";
+            default: return "Medical Facility";
         }
     };
 
-    // Calculate distance between two coordinates using Haversine formula
-    const calculateDistance = (
-        lat1: number,
-        lon1: number,
-        lat2: number,
-        lon2: number
-    ) => {
-        const R = 6371; // Radius of the earth in km
+    const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+        const R = 6371;
         const dLat = deg2rad(lat2 - lat1);
         const dLon = deg2rad(lon2 - lon1);
         const a =
@@ -435,88 +254,35 @@ export default function PharmacyScreenComponent() {
             Math.sin(dLon / 2) *
             Math.sin(dLon / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        const distance = R * c; // Distance in km
-        return distance;
+        return R * c;
     };
 
-    const deg2rad = (deg: number) => {
-        return deg * (Math.PI / 180);
-    };
+    const deg2rad = (deg: number) => deg * (Math.PI / 180);
 
-    // Generate nearby points with random small offsets
     const generateFallbackMedicalFacilities = (
         latitude: number,
         longitude: number,
-        maxRadius: number = 5 // Default 5km, but can be customized
+        maxRadius: number = 5
     ): MedicalFacility[] => {
-        console.log(`🏗️ Generating fallback facilities within ${maxRadius}km radius`);
-        
-        // Common names for medical facilities
         const facilityNames = {
-            pharmacy: [
-                "HealthPlus Pharmacy",
-                "MediCare Pharmacy", 
-                "Wellness Pharmacy",
-                "City Drug Store",
-                "Quick Meds Pharmacy",
-                "Apollo Pharmacy",
-                "Guardian Pharmacy",
-                "Medplus Pharmacy",
-                "24/7 Pharmacy",
-                "Care Pharmacy",
-            ],
-            hospital: [
-                "City General Hospital",
-                "St. Mary's Hospital",
-                "Metro Medical Center",
-                "Regional Health Hospital",
-                "Community Hospital",
-                "Memorial Hospital",
-                "University Hospital",
-                "Sacred Heart Medical Center",
-            ],
-            clinic: [
-                "Family Health Clinic",
-                "Prime Care Clinic",
-                "Wellness Medical Clinic",
-                "Community Health Center",
-                "Metro Family Clinic",
-                "Healthcare Plus Clinic",
-                "Neighborhood Medical Clinic",
-                "Express Care Clinic",
-            ]
+            pharmacy: ["HealthPlus Pharmacy", "MediCare Pharmacy", "Wellness Pharmacy", "Apollo Pharmacy", "Guardian Pharmacy"],
+            hospital: ["City General Hospital", "St. Mary's Hospital", "Metro Medical Center", "Community Hospital"],
+            clinic: ["Family Health Clinic", "Prime Care Clinic", "Wellness Medical Clinic", "Metro Family Clinic"]
         };
 
         const categories = ["pharmacy", "hospital", "clinic"];
-
-        // Generate 8-12 facilities within the specified radius
         const numFacilities = Math.floor(Math.random() * 5) + 8;
         const facilities: MedicalFacility[] = [];
 
         for (let i = 0; i < numFacilities; i++) {
-            // Generate a random position within the specified maxRadius
             const randomDistance = Math.random() * maxRadius;
             const randomAngle = Math.random() * 2 * Math.PI;
-
-            // Convert distance and angle to lat/lng offset
-            // This is a simplification but works for small distances
             const latOffset = (randomDistance * Math.cos(randomAngle)) / 111.32;
-            const lngOffset =
-                (randomDistance * Math.sin(randomAngle)) /
-                (111.32 * Math.cos((latitude * Math.PI) / 180));
-
+            const lngOffset = (randomDistance * Math.sin(randomAngle)) / (111.32 * Math.cos((latitude * Math.PI) / 180));
             const facilityLatitude = latitude + latOffset;
             const facilityLongitude = longitude + lngOffset;
+            const distance = calculateDistance(latitude, longitude, facilityLatitude, facilityLongitude);
 
-            // Calculate actual distance using the haversine formula
-            const distance = calculateDistance(
-                latitude,
-                longitude,
-                facilityLatitude,
-                facilityLongitude
-            );
-
-            // Ensure the generated facility is within the max radius
             if (distance <= maxRadius) {
                 const category = categories[Math.floor(Math.random() * categories.length)];
                 const namesForCategory = facilityNames[category as keyof typeof facilityNames];
@@ -524,244 +290,401 @@ export default function PharmacyScreenComponent() {
                 facilities.push({
                     id: `fallback-${i}`,
                     name: namesForCategory[Math.floor(Math.random() * namesForCategory.length)],
-                    address: `${Math.floor(Math.random() * 999) + 1} ${["Main St", "Health Ave", "Medical Rd", "Care Lane", "Wellness Blvd"][
-                        Math.floor(Math.random() * 5)
-                    ]}`,
+                    address: `${Math.floor(Math.random() * 999) + 1} Medical Avenue`,
                     distance: distance,
                     category: category,
                     phone: `+91-${Math.floor(Math.random() * 90000) + 10000}-${Math.floor(Math.random() * 90000) + 10000}`,
-                    coordinates: {
-                        latitude: facilityLatitude,
-                        longitude: facilityLongitude,
-                    },
+                    coordinates: { latitude: facilityLatitude, longitude: facilityLongitude },
                     rating: generateRealisticRating(category),
                     isOpen: isLikelyOpen(category),
                 });
             }
         }
 
-        // Sort by distance
         facilities.sort((a, b) => a.distance - b.distance);
-
-        console.log(`✅ Generated ${facilities.length} fallback facilities within ${maxRadius}km`);
         return facilities;
     };
 
-    const openMaps = (facility: MedicalFacility) => {
-        const { latitude, longitude } = facility.coordinates;
-        const label = facility.name;
-
-        const scheme = Platform.OS === "ios" ? "maps:" : "geo:";
-        const url =
-            Platform.OS === "ios"
-                ? `${scheme}?q=${label}&ll=${latitude},${longitude}`
-                : `${scheme}${latitude},${longitude}?q=${label}`;
-
-        Linking.openURL(url);
-    };
-
-    const facilityImages: { [key: string]: string } = {
-        // Category images
-        pharmacy: "https://images.unsplash.com/photo-1576091160399-112ba8d25d1f", // Pharmacy interior
-        hospital: "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d", // Hospital building
-        clinic: "https://images.unsplash.com/photo-1551601651-2a8555f1a136", // Medical clinic
-
-        // Default image - a generic medical facility
-        default: "https://images.unsplash.com/photo-1504813184591-01572f98c85f"
-    };
-
-    // Get appropriate image for the medical facility with fallbacks
-    const getMedicalFacilityImage = (facility: MedicalFacility) => {
-        // Try to match by category first (most reliable)
-        if (facility.category && facilityImages[facility.category]) {
-            return facilityImages[facility.category];
+    const getCategoryColor = (category: string) => {
+        switch (category) {
+            case 'pharmacy': return '#2196F3';
+            case 'hospital': return '#F44336';
+            case 'clinic': return '#4CAF50';
+            default: return '#009688';
         }
-
-        // If no category match or category is unknown, use default
-        return facilityImages.default;
     };
 
+    const getCategoryIcon = (category: string) => {
+        switch (category) {
+            case 'pharmacy': return '💊';
+            case 'hospital': return '🏥';
+            case 'clinic': return '🏨';
+            default: return '⚕️';
+        }
+    };
 
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Medical Facilities Map</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""/>
+    
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            overflow: hidden;
+        }
+        
+        #map {
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        .custom-popup {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        .popup-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        
+        .popup-category {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            color: white;
+            margin-bottom: 8px;
+        }
+        
+        .popup-info {
+            font-size: 14px;
+            color: #666;
+            line-height: 1.5;
+            margin-bottom: 4px;
+        }
+        
+        .popup-distance {
+            font-size: 13px;
+            color: #2196F3;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+        
+        .popup-rating {
+            color: #FFA000;
+            font-weight: 600;
+        }
+        
+        .popup-status {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        
+        .status-open {
+            background-color: #E8F5E9;
+            color: #4CAF50;
+        }
+        
+        .status-closed {
+            background-color: #FFEBEE;
+            color: #F44336;
+        }
+        
+        .leaflet-popup-content-wrapper {
+            border-radius: 12px;
+            padding: 8px;
+        }
+        
+        .leaflet-popup-content {
+            margin: 12px;
+            min-width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <script>
+        let map;
+        let markers = [];
+        let userMarker;
+        
+        // Initialize the map
+        function initMap(lat, lng) {
+            if (map) {
+                map.remove();
+            }
+            
+            map = L.map('map', {
+                zoomControl: true,
+                attributionControl: false
+            }).setView([lat, lng], 14);
+            
+            // Add OpenStreetMap tile layer
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+            
+            // Add user location marker
+            const userIcon = L.divIcon({
+                html: '<div style="background-color: #2196F3; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>',
+                iconSize: [20, 20],
+                className: 'user-location-marker'
+            });
+            
+            userMarker = L.marker([lat, lng], { icon: userIcon })
+                .addTo(map)
+                .bindPopup('<div class="custom-popup"><div class="popup-title">📍 Your Location</div></div>');
+            
+            // Add 4km radius circle
+            L.circle([lat, lng], {
+                color: '#2196F3',
+                fillColor: '#2196F3',
+                fillOpacity: 0.1,
+                radius: 4000
+            }).addTo(map);
+        }
+        
+        // Update markers on the map
+        window.updateMarkers = function(facilities) {
+            // Clear existing markers
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+            
+            facilities.forEach(facility => {
+                const color = getCategoryColor(facility.category);
+                const icon = getCategoryIcon(facility.category);
+                
+                const customIcon = L.divIcon({
+                    html: \`<div style="
+                        background-color: \${color};
+                        width: 32px;
+                        height: 32px;
+                        border-radius: 50% 50% 50% 0;
+                        transform: rotate(-45deg);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        border: 3px solid white;
+                        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+                    ">
+                        <span style="transform: rotate(45deg); font-size: 16px;">\${icon}</span>
+                    </div>\`,
+                    iconSize: [32, 32],
+                    iconAnchor: [16, 32],
+                    popupAnchor: [0, -32],
+                    className: 'custom-marker'
+                });
+                
+                const popupContent = \`
+                    <div class="custom-popup">
+                        <div class="popup-title">\${facility.name}</div>
+                        <div class="popup-category" style="background-color: \${color}">
+                            \${icon} \${facility.category.toUpperCase()}
+                        </div>
+                        <div class="popup-info">
+                            📍 \${facility.address}
+                        </div>
+                        \${facility.rating ? \`<div class="popup-info"><span class="popup-rating">⭐ \${facility.rating}</span></div>\` : ''}
+                        \${facility.phone ? \`<div class="popup-info">📞 \${facility.phone}</div>\` : ''}
+                        \${facility.isOpen !== undefined ? \`
+                            <div class="popup-info">
+                                <span class="popup-status \${facility.isOpen ? 'status-open' : 'status-closed'}">
+                                    \${facility.isOpen ? '🟢 Open' : '🔴 Closed'}
+                                </span>
+                            </div>
+                        \` : ''}
+                        <div class="popup-distance">📏 \${facility.distance.toFixed(2)} km away</div>
+                    </div>
+                \`;
+                
+                const marker = L.marker(
+                    [facility.coordinates.latitude, facility.coordinates.longitude],
+                    { icon: customIcon }
+                ).addTo(map);
+                
+                marker.bindPopup(popupContent, {
+                    maxWidth: 300,
+                    className: 'custom-popup-wrapper'
+                });
+                
+                markers.push(marker);
+            });
+            
+            // Fit bounds to show all markers
+            if (facilities.length > 0) {
+                const bounds = L.latLngBounds(
+                    facilities.map(f => [f.coordinates.latitude, f.coordinates.longitude])
+                );
+                if (userMarker) {
+                    bounds.extend(userMarker.getLatLng());
+                }
+                map.fitBounds(bounds, { padding: [50, 50] });
+            }
+        };
+        
+        function getCategoryColor(category) {
+            switch(category) {
+                case 'pharmacy': return '#2196F3';
+                case 'hospital': return '#F44336';
+                case 'clinic': return '#4CAF50';
+                default: return '#009688';
+            }
+        }
+        
+        function getCategoryIcon(category) {
+            switch(category) {
+                case 'pharmacy': return '💊';
+                case 'hospital': return '🏥';
+                case 'clinic': return '🏨';
+                default: return '⚕️';
+            }
+        }
+        
+        // Communicate with React Native
+        window.addEventListener('message', function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'INIT_MAP') {
+                    initMap(data.latitude, data.longitude);
+                } else if (data.type === 'UPDATE_MARKERS') {
+                    window.updateMarkers(data.facilities);
+                }
+            } catch (e) {
+                console.error('Error parsing message:', e);
+            }
+        });
+        
+        // Signal that the page is ready
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_READY' }));
+    </script>
+</body>
+</html>
+    `;
 
+    const handleWebViewMessage = (event: any) => {
+        try {
+            const data = JSON.parse(event.nativeEvent.data);
+            if (data.type === 'MAP_READY' && location) {
+                // Initialize map with user location
+                webViewRef.current?.injectJavaScript(`
+                    initMap(${location.latitude}, ${location.longitude});
+                    true;
+                `);
+            }
+        } catch (error) {
+            console.error('Error handling WebView message:', error);
+        }
+    };
 
-    const renderMedicalFacilityCard = ({ item }: { item: MedicalFacility }) => {
+    const handleRefresh = () => {
+        if (location) {
+            setLoading(true);
+            fetchNearbyMedicalFacilities();
+        } else {
+            getCurrentLocation();
+        }
+    };
+
+    if (loading && !location) {
         return (
-            <TouchableOpacity
-                style={[
-                    styles.card,
-                    { backgroundColor: Colors[colorScheme ?? "light"].cardBackground },
-                ]}
-                onPress={() => openMaps(item)}
-            >
-                <Image
-                    source={{ uri: getMedicalFacilityImage(item) }}
-                    className="w-full h-40 rounded-t-xl"
-                    style={styles.facilityImage}
-                />
-                <View style={styles.cardContent}>
-                    <Text
-                        style={[
-                            styles.facilityName,
-                            { color: Colors[colorScheme ?? "light"].text },
-                        ]}
-                    >
-                        {item.name}
-                    </Text>
-
-                    <View style={styles.ratingContainer}>
-                        {item.rating && (
-                            <>
-                                <Ionicons name="star" size={16} color="#FFD700" />
-                                <Text style={styles.ratingText}>{item.rating.toFixed(1)}</Text>
-                            </>
-                        )}
-
-                        {item.isOpen !== undefined && (
-                            <Text
-                                style={[
-                                    styles.openStatus,
-                                    { color: item.isOpen ? "#4CAF50" : "#F44336" },
-                                ]}
-                            >
-                                {item.isOpen ? " • Open Now" : " • Closed"}
-                            </Text>
-                        )}
-                    </View>
-
-                    <Text
-                        style={[
-                            styles.address,
-                            { color: Colors[colorScheme ?? "light"].textSecondary },
-                        ]}
-                    >
-                        {item.address}
-                    </Text>
-
-                    {item.phone && (
-                        <Text
-                            style={[
-                                styles.phone,
-                                { color: Colors[colorScheme ?? "light"].tint },
-                            ]}
-                        >
-                            📞 {item.phone}
-                        </Text>
-                    )}
-
-                    <View style={styles.distanceContainer}>
-                        <Ionicons
-                            name="location"
-                            size={16}
-                            color={Colors[colorScheme ?? "light"].tint}
-                        />
-                        <Text
-                            style={[
-                                styles.distance,
-                                { color: Colors[colorScheme ?? "light"].textSecondary },
-                            ]}
-                        >
-                            {item.distance.toFixed(2)} km away
-                        </Text>
-                    </View>
-
-                    <View style={[styles.facilityType, { backgroundColor: getFacilityColor(item.category) }]}>
-                        <Ionicons name={getFacilityIcon(item.category)} size={14} color="#FFFFFF" />
-                        <Text style={styles.facilityTypeText}>
-                            {getFacilityDisplayName(item.category)}
-                        </Text>
-                    </View>
-
-                    <View style={styles.directionsButton}>
-                        <Text style={styles.directionsText}>Get Directions</Text>
-                        <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
-                    </View>
-                </View>
-            </TouchableOpacity>
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].tint} />
+                <Text style={[styles.loadingText, { color: Colors[colorScheme ?? "light"].text }]}>
+                    {loadingMessage}
+                </Text>
+            </View>
         );
-    };
-
-    const getFacilityIcon = (category: string) => {
-        switch (category) {
-            case "pharmacy":
-                return "medical";
-            case "hospital":
-                return "business";
-            case "clinic":
-                return "heart";
-            default:
-                return "medical";
-        }
-    };
-
-    const getFacilityColor = (category: string) => {
-        switch (category) {
-            case "pharmacy":
-                return "#2196F3"; // Blue
-            case "hospital":
-                return "#F44336"; // Red
-            case "clinic":
-                return "#4CAF50"; // Green
-            default:
-                return "#009688"; // Teal
-        }
-    };
-
-    const getFacilityDisplayName = (category: string) => {
-        switch (category) {
-            case "pharmacy":
-                return "Pharmacy";
-            case "hospital":
-                return "Hospital";
-            case "clinic":
-                return "Clinic";
-            default:
-                return "Medical Facility";
-        }
-    };
-
-    if (loading && !facilities.length) {
-        return <LoadingAnimation message={loadingMessage} />;
     }
 
     return (
         <View style={styles.container}>
-            {facilities.length === 0 ? (
-                <View style={[styles.contentContainer, { flex: 1 }]}>
-                    <View style={styles.noResultsContainer}>
-                        <Ionicons
-                            name="medical"
-                            size={60}
-                            color={Colors[colorScheme ?? "light"].tint}
-                        />
-                        <Text
-                            style={[
-                                styles.noResultsText,
-                                { color: Colors[colorScheme ?? "light"].text },
-                            ]}
-                        >
-                            No medical facilities found nearby
-                        </Text>
-                        <Text
-                            style={[
-                                styles.noResultsSubtext,
-                                { color: Colors[colorScheme ?? "light"].textSecondary },
-                            ]}
-                        >
-                            Try expanding your search radius or try again later
+            {/* Header */}
+            <View style={[styles.header, { backgroundColor: Colors[colorScheme ?? "light"].tint }]}>
+                <View style={styles.headerContent}>
+                    <Ionicons name="medical" size={32} color="#fff" />
+                    <View style={styles.headerTextContainer}>
+                        <Text style={styles.headerTitle}>Nearby Medical Facilities</Text>
+                        <Text style={styles.headerSubtitle}>
+                            {facilities.length} facilities found within 4km
                         </Text>
                     </View>
                 </View>
-            ) : (
-                <FlatList
-                    data={facilities}
-                    renderItem={renderMedicalFacilityCard}
-                    keyExtractor={(item) => item.id}
-                    contentContainerStyle={styles.list}
-                    showsVerticalScrollIndicator={false}
-                    style={styles.contentContainer}
-                    ListHeaderComponent={<View style={{ height: 16 }} />}
-                />
-            )}
+                <TouchableOpacity 
+                    style={styles.refreshButton} 
+                    onPress={handleRefresh}
+                    disabled={loading}
+                >
+                    {loading ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                        <Ionicons name="refresh" size={24} color="#fff" />
+                    )}
+                </TouchableOpacity>
+            </View>
+
+            {/* Legend */}
+            <View style={styles.legend}>
+                <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#2196F3' }]} />
+                    <Text style={styles.legendText}>Pharmacy</Text>
+                </View>
+                <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#F44336' }]} />
+                    <Text style={styles.legendText}>Hospital</Text>
+                </View>
+                <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#4CAF50' }]} />
+                    <Text style={styles.legendText}>Clinic</Text>
+                </View>
+            </View>
+
+            {/* Map WebView */}
+            <WebView
+                ref={webViewRef}
+                source={{ html: htmlContent }}
+                style={styles.map}
+                onMessage={handleWebViewMessage}
+                javaScriptEnabled={true}
+                domStorageEnabled={true}
+                startInLoadingState={true}
+                renderLoading={() => (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={Colors[colorScheme ?? "light"].tint} />
+                        <Text style={[styles.loadingText, { color: Colors[colorScheme ?? "light"].text }]}>
+                            Loading map...
+                        </Text>
+                    </View>
+                )}
+            />
         </View>
     );
 }
@@ -769,229 +692,86 @@ export default function PharmacyScreenComponent() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        paddingTop: 20,
         backgroundColor: '#f5f5f5',
     },
-    centeredContainer: {
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 20,
-    },
-    // Loading Animation Styles
-    loadingContainer: {
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        backgroundColor: 'transparent',
-        paddingHorizontal: 20,
-    },
-    loadingContent: {
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    pulseCircle: {
-        position: 'absolute',
-        width: 120,
-        height: 120,
-        borderRadius: 60,
-    },
-    loadingMessage: {
-        marginTop: 30,
-        fontSize: 16,
-        fontWeight: '600',
-        textAlign: 'center',
-        marginBottom: 20,
-    },
-    dotsContainer: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginTop: 10,
-    },
-    dot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        marginHorizontal: 4,
-    },
-    // Header Styles
     header: {
-        marginBottom: 24,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
         alignItems: 'center',
-    },
-    headerTop: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        width: "100%",
-        paddingHorizontal: 20,
-        position: "relative",
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        paddingTop: Platform.OS === 'ios' ? 50 : 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 4,
     },
     headerContent: {
+        flexDirection: 'row',
         alignItems: 'center',
         flex: 1,
-        marginHorizontal: 16,
     },
-    title: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#ffffff',
-        marginBottom: 8,
-        textAlign: 'center',
-    },
-    subtitle: {
-        fontSize: 16,
-        color: '#ffffff',
-        textAlign: 'center',
-        opacity: 0.9,
-    },
-    refreshButtonHeader: {
-        backgroundColor: 'rgba(255, 255, 255, 0.2)',
-        borderRadius: 20,
-        padding: 8,
-    },
-    contentContainer: {
+    headerTextContainer: {
+        marginLeft: 12,
         flex: 1,
-        paddingHorizontal: 16,
     },
     headerTitle: {
-        fontSize: 22,
-        fontWeight: "bold",
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#fff',
+    },
+    headerSubtitle: {
+        fontSize: 13,
+        color: 'rgba(255, 255, 255, 0.9)',
+        marginTop: 2,
     },
     refreshButton: {
         padding: 8,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    },
+    legend: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        elevation: 2,
+    },
+    legendItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginHorizontal: 12,
+    },
+    legendDot: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        marginRight: 6,
+    },
+    legendText: {
+        fontSize: 13,
+        color: '#666',
+        fontWeight: '500',
+    },
+    map: {
+        flex: 1,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#f5f5f5',
     },
     loadingText: {
         marginTop: 16,
         fontSize: 16,
-    },
-    list: {
-        paddingBottom: 16,
-    },
-    card: {
-        borderRadius: 12,
-        marginBottom: 16,
-        overflow: "hidden",
-        elevation: 3,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-    },
-    shopImage: {
-        width: "100%",
-        height: 180,
-        resizeMode: "cover",
-    },
-    facilityImage: {
-        width: "100%",
-        height: 180,
-        resizeMode: "cover",
-    },
-    cardContent: {
-        padding: 16,
-    },
-    shopName: {
-        fontSize: 18,
-        fontWeight: "bold",
-        marginBottom: 4,
-    },
-    facilityName: {
-        fontSize: 18,
-        fontWeight: "bold",
-        marginBottom: 4,
-    },
-    ratingContainer: {
-        flexDirection: "row",
-        alignItems: "center",
-        marginBottom: 8,
-    },
-    ratingText: {
-        marginLeft: 4,
-        color: "#666",
-    },
-    openStatus: {
-        fontWeight: "500",
-    },
-    address: {
-        marginBottom: 8,
-        fontSize: 14,
-    },
-    phone: {
-        marginBottom: 8,
-        fontSize: 14,
-        fontWeight: "500",
-    },
-    distanceContainer: {
-        flexDirection: "row",
-        alignItems: "center",
-        marginBottom: 8,
-    },
-    distance: {
-        marginLeft: 4,
-        fontSize: 14,
-    },
-    shopType: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#009688",
-        alignSelf: "flex-start",
-        paddingVertical: 4,
-        paddingHorizontal: 8,
-        borderRadius: 12,
-        marginBottom: 12,
-    },
-    facilityType: {
-        flexDirection: "row",
-        alignItems: "center",
-        alignSelf: "flex-start",
-        paddingVertical: 4,
-        paddingHorizontal: 8,
-        borderRadius: 12,
-        marginBottom: 12,
-    },
-    shopTypeText: {
-        color: "#FFFFFF",
-        fontSize: 12,
-        fontWeight: "500",
-        marginLeft: 4,
-    },
-    facilityTypeText: {
-        color: "#FFFFFF",
-        fontSize: 12,
-        fontWeight: "500",
-        marginLeft: 4,
-    },
-    directionsButton: {
-        backgroundColor: "#6A994E",
-        borderRadius: 8,
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-        flexDirection: "row",
-        justifyContent: "center",
-        alignItems: "center",
-    },
-    directionsText: {
-        color: "#FFFFFF",
-        fontWeight: "600",
-        marginRight: 4,
-    },
-    noResultsContainer: {
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 20,
-    },
-    noResultsText: {
-        fontSize: 18,
-        fontWeight: "bold",
-        marginTop: 16,
-        marginBottom: 8,
-        textAlign: "center",
-    },
-    noResultsSubtext: {
-        fontSize: 14,
-        textAlign: "center",
+        fontWeight: '500',
     },
 });
