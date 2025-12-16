@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useCallback } from "react"
 import {
     View,
     Text,
@@ -11,6 +11,8 @@ import {
     Alert,
     Dimensions,
 } from "react-native"
+import { useFocusEffect } from "@react-navigation/native"
+import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context"
 import {
     initialize,
@@ -225,6 +227,15 @@ const HealthDashboard: React.FC = () => {
             setShowPermissionModal(false)
         }
     }, [isInitialized, hasEssentialPermissions, permissions])
+
+    // Auto-refresh when screen comes into focus
+    useFocusEffect(
+        useCallback(() => {
+            if (isInitialized && hasEssentialPermissions) {
+                onRefresh()
+            }
+        }, [isInitialized, hasEssentialPermissions])
+    )
 
     const checkEssentialPermissions = () => {
         const essentialTypes = ["Steps", "HeartRate", "Weight"]
@@ -882,6 +893,13 @@ const HealthDashboard: React.FC = () => {
                             <Text style={styles.greeting}>Health Dashboard</Text>
                             <Text style={styles.subtitle}>Here's your health summary</Text>
                         </View>
+                        <TouchableOpacity 
+                            style={styles.prescriptionButton}
+                            onPress={() => router.push("/prescription")}
+                            activeOpacity={0.8}
+                        >
+                            <Ionicons name="scan" size={28} color="white" />
+                        </TouchableOpacity>
                     </View>
 
                     {/* Health Cards */}
@@ -924,14 +942,6 @@ const HealthDashboard: React.FC = () => {
                             icon="🌡️"
                             color="#FFE4B8"
                             onPress={() => router.push("/temperature")}
-                        />
-                        <HealthCard
-                            title="Prescription"
-                            value={formatHealthValue(healthData.bodyTemp, "bodyTemp")}
-                            unit="°c"
-                            icon="🌡️"
-                            color="#FFE4B8"
-                            onPress={() => router.push("/prescription")}
                         />
 
                         {/* BMI Card */}
@@ -1087,6 +1097,19 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.3,
         shadowRadius: 8,
         elevation: 8,
+    },
+    prescriptionButton: {
+        backgroundColor: "rgba(255, 255, 255, 0.2)",
+        borderRadius: 16,
+        width: 56,
+        height: 56,
+        justifyContent: "center",
+        alignItems: "center",
+        borderWidth: 2,
+        borderColor: "rgba(255, 255, 255, 0.3)",
+    },
+    prescriptionIcon: {
+        fontSize: 28,
     },
     headerContent: {
         flex: 1,

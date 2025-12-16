@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
     View,
     Text,
@@ -8,7 +8,9 @@ import {
     Alert,
     Dimensions,
     ActivityIndicator,
+    Linking,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { Colors } from "@/constants/Colors";
@@ -57,8 +59,6 @@ export default function PharmacyScreen() {
             setLoading(true);
             setLoadingMessage("Getting your location...");
             
-            // Request location permissions
-            console.log('📍 Requesting location permissions...');
             const { status } = await Location.requestForegroundPermissionsAsync();
             console.log(`📍 Location permission status: ${status}`);
             
@@ -77,7 +77,6 @@ export default function PharmacyScreen() {
                 return;
             }
 
-            // Get current location
             console.log('🎯 Getting current position...');
             
             const currentLocation = await Location.getCurrentPositionAsync({
@@ -102,7 +101,6 @@ export default function PharmacyScreen() {
                 'Unable to get your current location. Using default location (Bangalore).',
                 [{ text: 'OK' }]
             );
-            // Use default location (Bangalore, India)
             setLocation({
                 latitude: 12.9716,
                 longitude: 77.5946
@@ -117,73 +115,81 @@ export default function PharmacyScreen() {
         }
 
         console.log('🏥 Fetching medical facilities nearby...');
+        console.log(`📍 Using location: ${location.latitude}, ${location.longitude}`);
         setLoadingMessage("Searching for medical facilities nearby...");
 
         try {
-            const maxRadius = 4000; // 4km in meters
+            const maxRadius = 5000; // 5km in meters
             
-            // Use Overpass API to get real data from OpenStreetMap
-            const overpassQuery = `
-                [out:json][timeout:25];
-                (
-                    node["amenity"="pharmacy"](around:${maxRadius},${location.latitude},${location.longitude});
-                    node["amenity"="hospital"](around:${maxRadius},${location.latitude},${location.longitude});
-                    node["amenity"="clinic"](around:${maxRadius},${location.latitude},${location.longitude});
-                    node["healthcare"="pharmacy"](around:${maxRadius},${location.latitude},${location.longitude});
-                    node["healthcare"="hospital"](around:${maxRadius},${location.latitude},${location.longitude});
-                    node["healthcare"="clinic"](around:${maxRadius},${location.latitude},${location.longitude});
-                );
-                out body 50;
-            `;
-
-            const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
+            const query = `[out:json];(node[amenity=pharmacy](around:${maxRadius},${location.latitude},${location.longitude});node[amenity=hospital](around:${maxRadius},${location.latitude},${location.longitude});node[amenity=clinic](around:${maxRadius},${location.latitude},${location.longitude}););out body;`;
             
-            const response = await fetch(overpassUrl);
+            console.log('🌐 Making Overpass API request...');
+            
+            const response = await fetch('https://overpass-api.de/api/interpreter', {
+                method: 'POST',
+                body: query,
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+            });
+            
+            console.log(`📡 Response status: ${response.status}`);
             
             if (response.ok) {
                 const data = await response.json();
+                console.log(`📦 Received ${data.elements?.length || 0} elements from API`);
                 
                 if (data.elements && data.elements.length > 0) {
                     const parsedFacilities = data.elements
                         .map((element: any) => {
+                            const lat = element.lat;
+                            const lon = element.lon;
+                            
+                            if (!lat || !lon) return null;
+                            
                             const distance = calculateDistance(
                                 location.latitude,
                                 location.longitude,
-                                element.lat,
-                                element.lon
+                                lat,
+                                lon
                             );
 
-                            if (distance > 4) return null;
+                            if (distance > 5) return null;
+
+                            const tags = element.tags || {};
+                            const amenity = tags.amenity || 'medical';
 
                             return {
                                 id: element.id.toString(),
-                                name: element.tags.name || getDefaultName(element.tags.amenity || element.tags.healthcare),
-                                address: element.tags.address || 
-                                        `${element.tags["addr:street"] || ""} ${element.tags["addr:housenumber"] || ""}`.trim() ||
+                                name: tags.name || getDefaultName(amenity),
+                                address: tags["addr:full"] || 
+                                        `${tags["addr:street"] || ""} ${tags["addr:housenumber"] || ""}`.trim() ||
+                                        tags["addr:city"] ||
                                         "Address not available",
                                 distance: distance,
-                                category: element.tags.amenity || element.tags.healthcare || "pharmacy",
-                                phone: element.tags.phone || element.tags["contact:phone"] || undefined,
+                                category: amenity,
+                                phone: tags.phone || tags["contact:phone"] || undefined,
                                 coordinates: {
-                                    latitude: element.lat,
-                                    longitude: element.lon,
+                                    latitude: lat,
+                                    longitude: lon,
                                 },
-                                rating: generateRealisticRating(element.tags.amenity || element.tags.healthcare),
-                                isOpen: isLikelyOpen(element.tags.amenity || element.tags.healthcare),
+                                rating: generateRealisticRating(amenity),
+                                isOpen: isLikelyOpen(amenity),
                             };
                         })
                         .filter((facility: any) => facility !== null);
 
+                    console.log(`✅ Parsed ${parsedFacilities.length} valid facilities`);
+
                     if (parsedFacilities.length > 0) {
                         parsedFacilities.sort((a: MedicalFacility, b: MedicalFacility) => a.distance - b.distance);
-                        const finalFacilities = parsedFacilities.slice(0, 20);
-                        setFacilities(finalFacilities);
-                        console.log(`✅ Found ${finalFacilities.length} facilities`);
+                        setFacilities(parsedFacilities);
+                        console.log(`✅ Set ${parsedFacilities.length} facilities to state`);
                         
                         // Send facilities to WebView
                         if (webViewRef.current) {
                             webViewRef.current.injectJavaScript(`
-                                window.updateMarkers(${JSON.stringify(finalFacilities)});
+                                window.updateMarkers(${JSON.stringify(parsedFacilities)});
                                 true;
                             `);
                         }
@@ -191,11 +197,15 @@ export default function PharmacyScreen() {
                         return;
                     }
                 }
+            } else {
+                console.error(`❌ API request failed with status: ${response.status}`);
+                const errorText = await response.text();
+                console.error('Error response:', errorText);
             }
             
             // Fallback to generated data
-            console.log('🚨 Using fallback data');
-            const fallbackData = generateFallbackMedicalFacilities(location.latitude, location.longitude, 4);
+            console.log('🚨 Using fallback data - API returned no results');
+            const fallbackData = generateFallbackMedicalFacilities(location.latitude, location.longitude, 5);
             setFacilities(fallbackData);
             
             if (webViewRef.current) {
@@ -206,7 +216,7 @@ export default function PharmacyScreen() {
             }
         } catch (err) {
             console.error(`❌ Error fetching facilities:`, err);
-            const fallbackData = generateFallbackMedicalFacilities(location.latitude, location.longitude, 4);
+            const fallbackData = generateFallbackMedicalFacilities(location.latitude, location.longitude, 5);
             setFacilities(fallbackData);
             
             if (webViewRef.current) {
@@ -265,13 +275,20 @@ export default function PharmacyScreen() {
         maxRadius: number = 5
     ): MedicalFacility[] => {
         const facilityNames = {
-            pharmacy: ["HealthPlus Pharmacy", "MediCare Pharmacy", "Wellness Pharmacy", "Apollo Pharmacy", "Guardian Pharmacy"],
-            hospital: ["City General Hospital", "St. Mary's Hospital", "Metro Medical Center", "Community Hospital"],
-            clinic: ["Family Health Clinic", "Prime Care Clinic", "Wellness Medical Clinic", "Metro Family Clinic"]
+            pharmacy: [
+                "HealthPlus Pharmacy", "MediCare Pharmacy", "Wellness Pharmacy", "Apollo Pharmacy", 
+                "Guardian Pharmacy", "LifeLine Pharmacy", "MedExpress Pharmacy", "CareFirst Pharmacy"
+            ],
+            hospital: [
+                "City General Hospital", "St. Mary's Hospital", "Metro Medical Center", "Community Hospital"
+            ],
+            clinic: [
+                "Family Health Clinic", "Prime Care Clinic", "Wellness Medical Clinic", "Metro Family Clinic"
+            ]
         };
 
         const categories = ["pharmacy", "hospital", "clinic"];
-        const numFacilities = Math.floor(Math.random() * 5) + 8;
+        const numFacilities = Math.floor(Math.random() * 10) + 15;
         const facilities: MedicalFacility[] = [];
 
         for (let i = 0; i < numFacilities; i++) {
@@ -305,6 +322,48 @@ export default function PharmacyScreen() {
         return facilities;
     };
 
+    const openNavigationApp = (facility: MedicalFacility) => {
+        const { latitude, longitude } = facility.coordinates;
+        const label = encodeURIComponent(facility.name);
+        
+        const scheme = Platform.select({
+            ios: `maps:0,0?q=${label}@${latitude},${longitude}`,
+            android: `geo:0,0?q=${latitude},${longitude}(${label})`
+        });
+
+        const url = scheme || `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+
+        Linking.canOpenURL(url)
+            .then((supported) => {
+                if (supported) {
+                    return Linking.openURL(url);
+                } else {
+                    const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+                    return Linking.openURL(webUrl);
+                }
+            })
+            .catch((err) => {
+                console.error('Error opening navigation:', err);
+                Alert.alert('Error', 'Unable to open navigation app');
+            });
+    };
+
+    const callPhone = (phone: string) => {
+        const phoneUrl = `tel:${phone}`;
+        Linking.canOpenURL(phoneUrl)
+            .then((supported) => {
+                if (supported) {
+                    return Linking.openURL(phoneUrl);
+                } else {
+                    Alert.alert('Error', 'Phone calls not supported on this device');
+                }
+            })
+            .catch((err) => {
+                console.error('Error making call:', err);
+                Alert.alert('Error', 'Unable to make phone call');
+            });
+    };
+
     const getCategoryColor = (category: string) => {
         switch (category) {
             case 'pharmacy': return '#2196F3';
@@ -331,15 +390,8 @@ export default function PharmacyScreen() {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Medical Facilities Map</title>
     
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-        crossorigin=""/>
-    
-    <!-- Leaflet JavaScript -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-        crossorigin=""></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     
     <style>
         * {
@@ -349,7 +401,7 @@ export default function PharmacyScreen() {
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             overflow: hidden;
         }
         
@@ -371,19 +423,19 @@ export default function PharmacyScreen() {
         
         .popup-category {
             display: inline-block;
-            padding: 4px 8px;
+            padding: 4px 10px;
             border-radius: 12px;
-            font-size: 12px;
-            font-weight: 600;
+            font-size: 11px;
+            font-weight: 700;
             color: white;
             margin-bottom: 8px;
         }
         
         .popup-info {
-            font-size: 14px;
+            font-size: 13px;
             color: #666;
-            line-height: 1.5;
-            margin-bottom: 4px;
+            line-height: 1.6;
+            margin-bottom: 6px;
         }
         
         .popup-distance {
@@ -391,6 +443,43 @@ export default function PharmacyScreen() {
             color: #2196F3;
             font-weight: 600;
             margin-top: 8px;
+            margin-bottom: 12px;
+        }
+        
+        .popup-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        
+        .action-btn {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: opacity 0.2s;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        .action-btn:active {
+            opacity: 0.7;
+        }
+        
+        .navigate-btn {
+            background-color: #2196F3;
+            color: white;
+        }
+        
+        .call-btn {
+            background-color: #4CAF50;
+            color: white;
         }
         
         .popup-rating {
@@ -400,11 +489,10 @@ export default function PharmacyScreen() {
         
         .popup-status {
             display: inline-block;
-            padding: 2px 6px;
-            border-radius: 4px;
+            padding: 3px 8px;
+            border-radius: 6px;
             font-size: 11px;
             font-weight: 600;
-            margin-left: 8px;
         }
         
         .status-open {
@@ -418,13 +506,13 @@ export default function PharmacyScreen() {
         }
         
         .leaflet-popup-content-wrapper {
-            border-radius: 12px;
-            padding: 8px;
+            border-radius: 16px;
+            padding: 4px;
         }
         
         .leaflet-popup-content {
-            margin: 12px;
-            min-width: 200px;
+            margin: 14px;
+            min-width: 220px;
         }
     </style>
 </head>
@@ -435,8 +523,8 @@ export default function PharmacyScreen() {
         let map;
         let markers = [];
         let userMarker;
+        let currentFacilities = [];
         
-        // Initialize the map
         function initMap(lat, lng) {
             if (map) {
                 map.remove();
@@ -447,13 +535,11 @@ export default function PharmacyScreen() {
                 attributionControl: false
             }).setView([lat, lng], 14);
             
-            // Add OpenStreetMap tile layer
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19,
-                attribution: '© OpenStreetMap contributors'
+                attribution: '© OpenStreetMap'
             }).addTo(map);
             
-            // Add user location marker
             const userIcon = L.divIcon({
                 html: '<div style="background-color: #2196F3; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>',
                 iconSize: [20, 20],
@@ -464,18 +550,16 @@ export default function PharmacyScreen() {
                 .addTo(map)
                 .bindPopup('<div class="custom-popup"><div class="popup-title">📍 Your Location</div></div>');
             
-            // Add 4km radius circle
             L.circle([lat, lng], {
                 color: '#2196F3',
                 fillColor: '#2196F3',
                 fillOpacity: 0.1,
-                radius: 4000
+                radius: 5000
             }).addTo(map);
         }
         
-        // Update markers on the map
         window.updateMarkers = function(facilities) {
-            // Clear existing markers
+            currentFacilities = facilities;
             markers.forEach(marker => map.removeLayer(marker));
             markers = [];
             
@@ -518,11 +602,21 @@ export default function PharmacyScreen() {
                         \${facility.isOpen !== undefined ? \`
                             <div class="popup-info">
                                 <span class="popup-status \${facility.isOpen ? 'status-open' : 'status-closed'}">
-                                    \${facility.isOpen ? '🟢 Open' : '🔴 Closed'}
+                                    \${facility.isOpen ? '● Open' : '● Closed'}
                                 </span>
                             </div>
                         \` : ''}
                         <div class="popup-distance">📏 \${facility.distance.toFixed(2)} km away</div>
+                        <div class="popup-actions">
+                            <button class="action-btn navigate-btn" onclick="handleNavigate('\${facility.id}')">
+                                🧭 Navigate
+                            </button>
+                            \${facility.phone ? \`
+                                <button class="action-btn call-btn" onclick="handleCall('\${facility.id}')">
+                                    📞 Call
+                                </button>
+                            \` : ''}
+                        </div>
                     </div>
                 \`;
                 
@@ -532,14 +626,13 @@ export default function PharmacyScreen() {
                 ).addTo(map);
                 
                 marker.bindPopup(popupContent, {
-                    maxWidth: 300,
+                    maxWidth: 280,
                     className: 'custom-popup-wrapper'
                 });
                 
                 markers.push(marker);
             });
             
-            // Fit bounds to show all markers
             if (facilities.length > 0) {
                 const bounds = L.latLngBounds(
                     facilities.map(f => [f.coordinates.latitude, f.coordinates.longitude])
@@ -569,7 +662,26 @@ export default function PharmacyScreen() {
             }
         }
         
-        // Communicate with React Native
+        window.handleNavigate = function(facilityId) {
+            const facility = currentFacilities.find(f => f.id === facilityId);
+            if (facility) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'NAVIGATE',
+                    facility: facility
+                }));
+            }
+        };
+        
+        window.handleCall = function(facilityId) {
+            const facility = currentFacilities.find(f => f.id === facilityId);
+            if (facility && facility.phone) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'CALL',
+                    facility: facility
+                }));
+            }
+        };
+        
         window.addEventListener('message', function(event) {
             try {
                 const data = JSON.parse(event.data);
@@ -583,7 +695,6 @@ export default function PharmacyScreen() {
             }
         });
         
-        // Signal that the page is ready
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_READY' }));
     </script>
 </body>
@@ -593,12 +704,17 @@ export default function PharmacyScreen() {
     const handleWebViewMessage = (event: any) => {
         try {
             const data = JSON.parse(event.nativeEvent.data);
+            console.log('📨 WebView message:', data.type);
+            
             if (data.type === 'MAP_READY' && location) {
-                // Initialize map with user location
                 webViewRef.current?.injectJavaScript(`
                     initMap(${location.latitude}, ${location.longitude});
                     true;
                 `);
+            } else if (data.type === 'NAVIGATE' && data.facility) {
+                openNavigationApp(data.facility);
+            } else if (data.type === 'CALL' && data.facility) {
+                callPhone(data.facility.phone);
             }
         } catch (error) {
             console.error('Error handling WebView message:', error);
@@ -634,7 +750,7 @@ export default function PharmacyScreen() {
                     <View style={styles.headerTextContainer}>
                         <Text style={styles.headerTitle}>Nearby Medical Facilities</Text>
                         <Text style={styles.headerSubtitle}>
-                            {facilities.length} facilities found within 4km
+                            {facilities.length} facilities within 5km • Tap markers for options
                         </Text>
                     </View>
                 </View>
@@ -651,23 +767,7 @@ export default function PharmacyScreen() {
                 </TouchableOpacity>
             </View>
 
-            {/* Legend */}
-            <View style={styles.legend}>
-                <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#2196F3' }]} />
-                    <Text style={styles.legendText}>Pharmacy</Text>
-                </View>
-                <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#F44336' }]} />
-                    <Text style={styles.legendText}>Hospital</Text>
-                </View>
-                <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#4CAF50' }]} />
-                    <Text style={styles.legendText}>Clinic</Text>
-                </View>
-            </View>
-
-            {/* Map WebView */}
+            {/* Map WebView - Full Screen */}
             <WebView
                 ref={webViewRef}
                 source={{ html: htmlContent }}
@@ -722,7 +822,7 @@ const styles = StyleSheet.create({
         color: '#fff',
     },
     headerSubtitle: {
-        fontSize: 13,
+        fontSize: 12,
         color: 'rgba(255, 255, 255, 0.9)',
         marginTop: 2,
     },
@@ -730,35 +830,6 @@ const styles = StyleSheet.create({
         padding: 8,
         borderRadius: 20,
         backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    },
-    legend: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#fff',
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 2,
-    },
-    legendItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginHorizontal: 12,
-    },
-    legendDot: {
-        width: 12,
-        height: 12,
-        borderRadius: 6,
-        marginRight: 6,
-    },
-    legendText: {
-        fontSize: 13,
-        color: '#666',
-        fontWeight: '500',
     },
     map: {
         flex: 1,

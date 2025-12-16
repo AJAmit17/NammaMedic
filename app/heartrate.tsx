@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Dimensions, Animated, Modal, TextInput, RefreshControl } from "react-native"
+import { useFocusEffect } from "@react-navigation/native"
 import { Ionicons } from "@expo/vector-icons"
 import { LinearGradient } from "expo-linear-gradient"
 import AsyncStorage from "@react-native-async-storage/async-storage"
@@ -272,7 +273,7 @@ export default function HeartRateScreen() {
     setShowAddModal(false)
   }
 
-  const syncWithHealthConnect = async () => {
+  const syncWithHealthConnect = async (showAlert: boolean = true) => {
     if (!isHealthConnectInitialized || !canReadHeartRate()) {
       return false;
     }
@@ -304,7 +305,9 @@ export default function HeartRateScreen() {
 
       setHeartRate(sampleCount > 0 ? Math.round(totalBeats / sampleCount) : 0)
 
-      Alert.alert("Sync Successful", "Heart rate data synced with Google Health.")
+      if (showAlert) {
+        Alert.alert("Sync Successful", "Heart rate data synced with Google Health.")
+      }
       return true;
     } catch (error) {
       console.error('Error syncing with Health Connect:', error);
@@ -312,22 +315,17 @@ export default function HeartRateScreen() {
     }
   }
 
-  const onRefresh = async () => {
+  const onRefresh = async (showAlert: boolean = true) => {
     setIsRefreshing(true);
     try {
       if (isHealthConnectInitialized && canReadHeartRate()) {
-        const syncSuccess = await syncWithHealthConnect();
+        const syncSuccess = await syncWithHealthConnect(showAlert);
         if (syncSuccess) {
           await loadWeeklyHRData();
-        } else {
-          Alert.alert("Sync Failed", "Unable to sync with Google Health. Please try again.");
         }
-      } else {
-        Alert.alert("Health Connect", "Health Connect is not available or permissions not granted.");
       }
     } catch (error) {
       console.error('Error during refresh:', error);
-      Alert.alert("Error", "An error occurred while syncing data.");
     } finally {
       setIsRefreshing(false);
     }
@@ -445,6 +443,9 @@ export default function HeartRateScreen() {
         setLoadingDayDetail(false);
         return;
       }
+
+      // Sync latest data silently before loading details
+      await syncWithHealthConnect(false);
 
       const date = new Date(selectedDate);
       const startOfDay = new Date(date);
@@ -627,6 +628,13 @@ export default function HeartRateScreen() {
     loadWeeklyHRData()
   }, [])
 
+  // Auto-refresh when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      onRefresh(false);
+    }, [isHealthConnectInitialized])
+  )
+
   const getHRStatusMessage = () => {
     const hr = heartRate;
 
@@ -655,14 +663,12 @@ export default function HeartRateScreen() {
       <LinearGradient colors={["#E91E63", "#C2185B", "#AD1457"]} style={styles.header}>
         <View style={styles.headerContent}>
           <View style={styles.headerTop}>
-            <View>
-              <Appbar.BackAction
-                onPress={() => router.back()}
-                iconColor="#ffffff"
-                size={24}
-                style={{ backgroundColor: 'rgba(255, 255, 255, 0.2)' }}
-              />
-            </View>
+            <Appbar.BackAction
+              onPress={() => router.back()}
+              iconColor="#ffffff"
+              size={24}
+              style={{ backgroundColor: 'rgba(255, 255, 255, 0.2)' }}
+            />
             <Text style={styles.greeting}>Heart Rate</Text>
             <TouchableOpacity
               style={styles.addButton}
@@ -905,86 +911,118 @@ export default function HeartRateScreen() {
                 <View style={styles.lineGraphContainer}>
                   <Text style={styles.graphTitle}>24-Hour Heart Rate Trend</Text>
 
-                  {selectedDayData.hourlyData && selectedDayData.hourlyData.length > 0 && selectedDayData.hourlyData.some(hour => hour.bpm > 0) ? (
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      <LineChart
-                        data={{
-                          labels: selectedDayData.hourlyData
-                            .filter((_, index) => index % 3 === 0) // Show every 3rd hour for cleaner x-axis
-                            .map(hour => `${hour.hour}h`),
-                          datasets: [{
-                            data: selectedDayData.hourlyData.map(hour => {
-                              // Only show actual readings, use 0 for missing data but chart will handle it
-                              return hour.bpm > 0 ? hour.bpm : 0;
-                            }),
+                  {(() => {
+                    const hourlyData = selectedDayData.hourlyData;
+                    const hasAnyData = hourlyData.some(hour => hour.bpm > 0);
+                    
+                    // Create labels for X-axis - one for each hour (24 total), display every 3 hours
+                    const xLabels = Array.from({ length: 24 }, (_, i) => 
+                      i % 3 === 0 ? `${i}h` : ''
+                    );
+                    
+                    // Map all 24 hours - use null marker for missing data
+                    const chartData = hourlyData.map(hour => hour.bpm > 0 ? hour.bpm : 40);
+                    const hasData = hourlyData.map(hour => hour.bpm > 0);
+                    
+                    if (!hasAnyData) {
+                      return (
+                        <View style={styles.noDataContainer}>
+                          <Ionicons name="heart-outline" size={48} color="#E0E0E0" />
+                          <Text style={styles.noDataText}>No heart rate data available for this day</Text>
+                          <Text style={styles.noDataSubtext}>
+                            Try recording some heart rate readings or sync with your health app.
+                          </Text>
+                        </View>
+                      );
+                    }
+                    
+                    return (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                        <LineChart
+                          data={{
+                            labels: xLabels,
+                            datasets: [
+                              {
+                                data: chartData,
+                                color: (opacity = 1) => `rgba(233, 30, 99, ${opacity})`,
+                                strokeWidth: 2,
+                              },
+                              // Hidden datasets to fix Y-axis range 40-140
+                              { data: [40], withDots: false, color: () => 'transparent' },
+                              { data: [140], withDots: false, color: () => 'transparent' },
+                            ],
+                          }}
+                          width={width + 80}
+                          height={250}
+                          yAxisSuffix=""
+                          yAxisInterval={1}
+                          segments={5}
+                          fromZero={false}
+                          formatYLabel={(value) => `${Math.round(Number(value))}`}
+                          chartConfig={{
+                            backgroundColor: "#ffffff",
+                            backgroundGradientFrom: "#ffffff",
+                            backgroundGradientTo: "#fff5f7",
+                            decimalPlaces: 0,
                             color: (opacity = 1) => `rgba(233, 30, 99, ${opacity})`,
-                            strokeWidth: 2,
-                            withDots: true,
-                          }],
-                        }}
-                        width={Math.max(width - 60, selectedDayData.hourlyData.length * 15)} // Responsive width for scrolling
-                        height={220}
-                        yAxisLabel=""
-                        yAxisSuffix=" bpm"
-                        yAxisInterval={1}
-                        chartConfig={{
-                          backgroundColor: "#ffffff",
-                          backgroundGradientFrom: "#ffffff",
-                          backgroundGradientTo: "#f8f9fa",
-                          decimalPlaces: 0,
-                          color: (opacity = 1) => `rgba(233, 30, 99, ${opacity})`,
-                          labelColor: (opacity = 1) => `rgba(102, 102, 102, ${opacity})`,
-                          style: {
-                            borderRadius: 16,
-                          },
-                          propsForDots: {
-                            r: "4",
-                            strokeWidth: "2",
-                            stroke: "#E91E63",
-                            fill: "#ffffff"
-                          },
-                          propsForBackgroundLines: {
-                            strokeDasharray: "5,5",
-                            stroke: "#e0e0e0",
-                            strokeWidth: 1
-                          },
-                          fillShadowGradient: "#E91E63",
-                          fillShadowGradientOpacity: 0.1,
-                        }}
-                        // No bezier for accurate medical data - straight lines only between actual readings
-                        style={{
-                          marginVertical: 8,
-                          borderRadius: 16,
-                          elevation: 3,
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 2 },
-                          shadowOpacity: 0.1,
-                          shadowRadius: 8,
-                        }}
-                        onDataPointClick={(data) => {
-                          const hourData = selectedDayData.hourlyData[data.index * 3]; // Adjust for filtered labels
-                          if (hourData) {
-                            const message = hourData.bpm > 0
-                              ? `Heart Rate: ${hourData.bpm} BPM`
-                              : 'No heart rate data recorded';
-                            Alert.alert(
-                              `${hourData.hour}:00`,
-                              message,
-                              [{ text: "OK" }]
+                            labelColor: (opacity = 1) => `rgba(80, 80, 80, ${opacity})`,
+                            style: { borderRadius: 16 },
+                            propsForDots: {
+                              r: "4",
+                            },
+                            propsForBackgroundLines: {
+                              strokeDasharray: "5,5",
+                              stroke: "#f0e0e5",
+                              strokeWidth: 1
+                            },
+                            propsForLabels: {
+                              fontSize: 11,
+                              fontWeight: '500',
+                            },
+                          }}
+                          withDots={true}
+                          withInnerLines={true}
+                          withOuterLines={true}
+                          withVerticalLines={true}
+                          withHorizontalLines={true}
+                          withVerticalLabels={true}
+                          withHorizontalLabels={true}
+                          renderDotContent={({ x, y, index }) => {
+                            if (!hasData[index]) return null;
+                            return (
+                              <View
+                                key={index}
+                                style={{
+                                  position: 'absolute',
+                                  left: x - 6,
+                                  top: y - 6,
+                                  width: 12,
+                                  height: 12,
+                                  borderRadius: 6,
+                                  backgroundColor: '#E91E63',
+                                  borderWidth: 2,
+                                  borderColor: '#fff',
+                                }}
+                              />
                             );
-                          }
-                        }}
-                      />
-                    </ScrollView>
-                  ) : (
-                    <View style={styles.noDataContainer}>
-                      <Ionicons name="heart-outline" size={48} color="#E0E0E0" />
-                      <Text style={styles.noDataText}>No heart rate data available for this day</Text>
-                      <Text style={styles.noDataSubtext}>
-                        Try recording some heart rate readings or check if your health app has data for this date.
-                      </Text>
-                    </View>
-                  )}
+                          }}
+                          style={{
+                            marginVertical: 8,
+                            borderRadius: 16,
+                          }}
+                          // onDataPointClick={(data) => {
+                          //   if (hasData[data.index]) {
+                          //     Alert.alert(
+                          //       `${data.index}:00`,
+                          //       `Heart Rate: ${chartData[data.index]} BPM`,
+                          //       [{ text: "OK" }]
+                          //     );
+                          //   }
+                          // }}
+                        />
+                      </ScrollView>
+                    );
+                  })()}
                 </View>
               </ScrollView>
             ) : (
@@ -1650,6 +1688,91 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#333",
     marginBottom: 12,
+  },
+  customChartContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingTop: 10,
+  },
+  yAxisContainer: {
+    width: 40,
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    paddingRight: 8,
+    height: 200,
+  },
+  yAxisLabel: {
+    fontSize: 11,
+    color: '#666',
+    fontWeight: '500',
+  },
+  chartArea: {
+    position: 'relative',
+    backgroundColor: '#fafafa',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
+  gridLineHorizontal: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: '#e8e8e8',
+  },
+  gridLineVertical: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 1,
+    backgroundColor: '#e8e8e8',
+  },
+  xAxisContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+  },
+  xAxisLabel: {
+    fontSize: 11,
+    color: '#666',
+    fontWeight: '500',
+  },
+  dataPointHR: {
+    position: 'absolute',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 3,
+    borderColor: '#E91E63',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#E91E63',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+  },
+  dataPointInnerHR: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#E91E63',
+  },
+  noDataOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.8)',
+  },
+  noDataOverlayText: {
+    fontSize: 14,
+    color: '#999',
+    fontWeight: '500',
   },
   noDataContainer: {
     flex: 1,

@@ -18,7 +18,7 @@ import { Appbar } from 'react-native-paper';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as ImagePicker from 'expo-image-picker';
 
-const GEMINI_API_KEY = "AIzaSyBuwEl50FypC2mQly5oCfecHP7qd8sMbdM";
+const GEMINI_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || "";
 
 interface DoctorInfo {
     name: string;
@@ -252,7 +252,7 @@ export default function PrescriptionScreen() {
             return;
         }
 
-        if (!GEMINI_API_KEY) {
+        if (!GEMINI_KEY) {
             Alert.alert('Configuration Error', 'Google Gemini API key not configured');
             return;
         }
@@ -261,8 +261,8 @@ export default function PrescriptionScreen() {
 
         try {
             // Initialize Gemini
-            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            const genAI = new GoogleGenerativeAI(GEMINI_KEY);
+            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
             // Convert image URL to base64
             const base64Image = await convertImageToBase64(selectedImage);

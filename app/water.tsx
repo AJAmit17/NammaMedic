@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Dimensions, Animated, Modal, TextInput, RefreshControl } from "react-native"
+import { useFocusEffect } from "@react-navigation/native"
 import { Ionicons } from "@expo/vector-icons"
 import { LinearGradient } from "expo-linear-gradient"
 import AsyncStorage from "@react-native-async-storage/async-storage"
@@ -487,17 +488,7 @@ export default function WaterScreen() {
     // Schedule water reminder notifications
     const setupWaterReminders = async () => {
         try {
-            // Check if water reminders are already set up
-            const alreadySetup = await isWaterRemindersSetup()
-
-            if (alreadySetup) {
-                console.log("Water reminders already configured")
-                // Just calculate next reminder time without scheduling again
-                calculateNextReminderTime()
-                return
-            }
-
-            // Schedule recurring water reminders using the notification utility
+            // Always schedule water reminders (function handles canceling existing ones)
             const identifiers = await scheduleWaterReminders()
 
             if (identifiers.length > 0) {
@@ -834,6 +825,14 @@ export default function WaterScreen() {
         loadWaterRecordIds()
         loadWeeklyWaterData()
     }, [])
+
+    // Auto-refresh when screen comes into focus
+    useFocusEffect(
+        useCallback(() => {
+            loadWaterIntake()
+            loadWeeklyWaterData()
+        }, [])
+    )
 
     const progress = Math.min(waterIntake / dailyGoal, 1)
     const remainingMl = Math.max(dailyGoal - waterIntake, 0)

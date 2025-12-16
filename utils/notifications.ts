@@ -51,6 +51,9 @@ export async function scheduleMedicationReminder(
     return [];
   }
 
+  // CRITICAL: Always cancel existing reminders for this medication first to prevent duplicates
+  await cancelMedicationReminders(medication.id);
+
   const identifiers: string[] = [];
 
   try {
@@ -93,6 +96,7 @@ export async function scheduleMedicationReminder(
       console.log(`Scheduled reminder for ${medication.name} at ${time} with ID: ${identifier}`);
     }
 
+    console.log(`Total ${identifiers.length} reminders scheduled for ${medication.name}`);
     return identifiers;
   } catch (error) {
     console.error("Error scheduling medication reminder:", error);
@@ -106,6 +110,15 @@ export async function scheduleRefillReminder(
   if (!medication.refillReminder) return;
 
   try {
+    // Cancel any existing refill reminders for this medication first
+    const scheduledNotifications = await Notifications.getAllScheduledNotificationsAsync();
+    for (const notification of scheduledNotifications) {
+      const data = notification.content.data as { medicationId?: string; type?: string } | null;
+      if (data?.medicationId === medication.id && data?.type === "refill") {
+        await Notifications.cancelScheduledNotificationAsync(notification.identifier);
+      }
+    }
+
     // Only schedule if supply is actually low
     if (medication.currentSupply <= medication.refillAt) {
       const identifier = await Notifications.scheduleNotificationAsync({
@@ -199,12 +212,15 @@ export async function setWaterRemindersSetup(isSetup: boolean): Promise<void> {
 // Water reminder functions
 export async function scheduleWaterReminders(): Promise<string[]> {
   try {
-    const alreadySetup = await isWaterRemindersSetup();
-    
-    if (alreadySetup) {
-      console.log("Water reminders already set up, skipping scheduling");
-      return [];
+    // CRITICAL: Always cancel existing water reminders first to prevent duplicates
+    const scheduledNotifications = await Notifications.getAllScheduledNotificationsAsync();
+    for (const notification of scheduledNotifications) {
+      const data = notification.content.data as { type?: string } | null;
+      if (data?.type === "water_reminder") {
+        await Notifications.cancelScheduledNotificationAsync(notification.identifier);
+      }
     }
+    console.log("Cancelled any existing water reminders");
 
     const hasPermissions = await requestNotificationPermissions();
     if (!hasPermissions) {
@@ -245,9 +261,11 @@ export async function scheduleWaterReminders(): Promise<string[]> {
       });
 
       identifiers.push(identifier);
+      console.log(`Scheduled water reminder at ${time.hour}:${time.minute.toString().padStart(2, '0')} with ID: ${identifier}`);
     }
 
     await setWaterRemindersSetup(true);
+    console.log(`Total ${identifiers.length} water reminders scheduled`);
 
     return identifiers;
   } catch (error) {
@@ -277,34 +295,29 @@ export async function cancelAllNotifications(): Promise<void> {
 }
 
 // Helper function to test notifications (useful for development)
-// export async function sendTestNotification(): Promise<void> {
-//   try {
-//     const hasPermissions = await requestNotificationPermissions();
-//     if (!hasPermissions) {
-//       console.log("Cannot send test notification: permissions not granted");
-//       return;
-//     }
+export async function sendTestNotification(): Promise<void> {
+  try {
+    const hasPermissions = await requestNotificationPermissions();
+    if (!hasPermissions) {
+      console.log("Cannot send test notification: permissions not granted");
+      return;
+    }
 
-//     await Notifications.scheduleNotificationAsync({
-//       content: {
-//         title: "🧪 Test Notification",
-//         body: "Your notification system is working correctly!",
-//         data: { 
-//           type: "test",
-//           url: "/(tabs)/home"
-//         },
-//         sound: "default",
-//       },
-//       trigger: {
-//         type: Notifications.SchedulableTriggerInputTypes.DAILY,
-//         hour: new Date().getHours(),
-//         minute: new Date().getMinutes() + 1,
-//       },
-//       trigger: null
-//     });
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "🧪 Test Notification",
+        body: "Your notification system is working correctly!",
+        data: { 
+          type: "test",
+          url: "/(tabs)/home"
+        },
+        sound: "default",
+      },
+      trigger: null, // Show immediately
+    });
 
-//     console.log("Test notification scheduled");
-//   } catch (error) {
-//     console.error("Error sending test notification:", error);
-//   }
-// }
+    console.log("Test notification sent");
+  } catch (error) {
+    console.error("Error sending test notification:", error);
+  }
+}
