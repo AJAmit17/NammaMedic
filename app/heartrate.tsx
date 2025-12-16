@@ -342,7 +342,7 @@ export default function HeartRateScreen() {
         for (let i = 6; i >= 0; i--) {
           const date = new Date(today);
           date.setDate(date.getDate() - i);
-          const dateString = date.toISOString().split('T')[0];
+          const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
           fallbackData.push({
             date: dateString,
@@ -372,7 +372,7 @@ export default function HeartRateScreen() {
       for (let i = 6; i >= 0; i--) {
         const date = new Date(today);
         date.setDate(date.getDate() - i);
-        const dateString = date.toISOString().split('T')[0];
+        const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
         const dayStart = new Date(date);
         dayStart.setHours(0, 0, 0, 0);
