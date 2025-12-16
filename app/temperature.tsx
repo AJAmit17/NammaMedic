@@ -390,7 +390,7 @@ export default function TemperatureScreen() {
                 for (let i = 6; i >= 0; i--) {
                     const date = new Date(today);
                     date.setDate(date.getDate() - i);
-                    const dateString = date.toISOString().split('T')[0];
+                    const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
                     fallbackData.push({
                         date: dateString,
@@ -419,9 +419,9 @@ export default function TemperatureScreen() {
 
             for (let i = 6; i >= 0; i--) {
                 const date = new Date(today);
-                date.setDate(today.getDate() - i);
+                date.setDate(date.getDate() - i);
 
-                const dateString = date.toISOString().split('T')[0];
+                const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
                 // Filter records for this specific day
                 const dayStart = new Date(date);
@@ -977,8 +977,8 @@ export default function TemperatureScreen() {
                                                                 strokeWidth: 2,
                                                             },
                                                             // Hidden datasets to fix Y-axis range 30-44
-                                                            { data: [30], withDots: true, color: () => 'transparent' },
-                                                            { data: [44], withDots: true, color: () => 'transparent' },
+                                                            { data: [30], withDots: false, color: () => 'transparent' },
+                                                            { data: [44], withDots: false, color: () => 'transparent' },
                                                         ],
                                                     }}
                                                     width={width * 1.5}

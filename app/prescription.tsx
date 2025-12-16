@@ -18,7 +18,7 @@ import { Appbar } from 'react-native-paper';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as ImagePicker from 'expo-image-picker';
 
-const GEMINI_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || "";
+const GEMINI_KEY = "AIzaSyACyo51oBUD2wZrE-O4Bo8_oOUYry1ppq4"
 
 interface DoctorInfo {
     name: string;
