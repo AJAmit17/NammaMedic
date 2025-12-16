@@ -24,9 +24,11 @@ import {
   DoseHistory,
 } from "../../utils/storage";
 import { useFocusEffect } from "@react-navigation/native";
+import * as Notifications from 'expo-notifications';
 import {
   requestNotificationPermissions,
   scheduleMedicationReminder,
+  sendTestNotification,
 } from "@/utils/notifications";
 import {
   useHealthData
@@ -272,6 +274,13 @@ export default function HomeScreen() {
         return;
       }
 
+      // IMPORTANT: Cancel ALL existing notifications first to prevent duplicates
+      // This ensures we only have one set of notifications scheduled at any time
+      const scheduledNotifications = await Notifications.getAllScheduledNotificationsAsync();
+      console.log(`Found ${scheduledNotifications.length} existing scheduled notifications - clearing all`);
+      await Notifications.cancelAllScheduledNotificationsAsync();
+
+      // Now schedule fresh notifications
       const medications = await getMedications();
       for (const medication of medications) {
         if (medication.reminderEnabled) {
@@ -392,6 +401,15 @@ export default function HomeScreen() {
             <View style={styles.flex1}>
               <Text style={styles.greeting}>Daily Dosage Progress</Text>
             </View>
+            <TouchableOpacity
+              style={styles.notificationButton}
+              onPress={async () => {
+                await sendTestNotification();
+                Alert.alert("Test Sent!", "Check your notifications!");
+              }}
+            >
+              <Ionicons name="flask-outline" size={24} color="white" />
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.notificationButton}
               onPress={() => setShowNotifications(true)}
